@@ -1,0 +1,6 @@
+.cache
+.ssh
+recovered_code
+.local
+voice-agent/venv/*
+voice-agent/__pycache__

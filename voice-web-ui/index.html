@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gravity Admin Panel: Dynamic Voice Orchestration</title>
+    <!-- Premium Google Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="livekit-client.umd.js"></script>
+    <style>
+        :root {
+            --bg-color: #09090b;
+            --panel-bg: rgba(20, 20, 25, 0.55);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-start: #00f2fe;
+            --accent-end: #4facfe;
+            --text-primary: #f4f4f5;
+            --text-secondary: #a1a1aa;
+            --danger-color: #f43f5e;
+            --success-color: #10b981;
+            --glow-color: rgba(0, 242, 254, 0.15);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            background-image: radial-gradient(circle at 50% 30%, rgba(79, 172, 254, 0.12), transparent 70%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow-x: hidden;
+        }
+
+        /* Glassmorphic Container */
+        .glass-panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 40px var(--glow-color);
+            transition: all 0.3s ease;
+        }
+
+        /* Authentication Centered Form */
+        #authContainer {
+            width: 100%;
+            max-width: 440px;
+            padding: 40px;
+            text-align: center;
+        }
+
+        #authContainer h2 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+            letter-spacing: -0.5px;
+        }
+
+        #authContainer p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin-bottom: 30px;
+        }
+
+        /* Main Workspace layout */
+        #workspaceContainer {
+            display: none; /* Shown dynamically on success */
+            width: 100%;
+            max-width: 1240px;
+            margin: 40px 20px;
+            padding: 40px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 20px;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .user-tag {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        /* Tab Navigation */
+        .tabs {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 30px;
+        }
+
+        .tab-btn {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 0.95rem;
+            padding: 12px 24px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .tab-btn:hover, .tab-btn.active {
+            background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+            color: #000;
+            border-color: transparent;
+            box-shadow: 0 5px 15px rgba(0, 242, 254, 0.25);
+        }
+
+        /* Grid layouts */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        @media (max-width: 900px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 30px;
+            transition: all 0.2s ease;
+        }
+
+        .panel-card:hover {
+            box-shadow: 0 10px 30px rgba(0, 242, 254, 0.04);
+            border-color: rgba(255, 255, 255, 0.12);
+        }
+
+        .panel-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Form Controls */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .form-group label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .form-control {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 0.95rem;
+            color: #fff;
+            outline: none;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .form-control:focus {
+            border-color: var(--accent-end);
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 0 10px rgba(79, 172, 254, 0.2);
+        }
+
+        select.form-control option {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+        }
+
+        /* Buttons */
+        .btn {
+            background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+            color: #000;
+            font-weight: 600;
+            font-size: 0.95rem;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-family: inherit;
+            width: 100%;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            filter: brightness(1.08);
+            box-shadow: 0 8px 20px rgba(0, 242, 254, 0.35);
+        }
+
+        .btn:disabled {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+            filter: none;
+        }
+
+        .btn-danger {
+            background: var(--danger-color);
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            box-shadow: 0 8px 20px rgba(244, 63, 94, 0.35);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: none;
+        }
+
+        /* Status Badge */
+        .status-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--text-secondary);
+            display: inline-block;
+        }
+
+        .status-dot.active {
+            background-color: var(--success-color);
+            box-shadow: 0 0 10px var(--success-color);
+        }
+
+        /* Business Studio List */
+        .business-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            max-height: 480px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        .business-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.2s ease;
+        }
+
+        .business-card:hover {
+            background: rgba(255, 255, 255, 0.04);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .biz-details h3 {
+            font-size: 1.15rem;
+            margin-bottom: 6px;
+            color: #fff;
+        }
+
+        .biz-meta {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .biz-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        /* Appointments list */
+        .appointments-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .appointment-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .appointment-card.cancelled {
+            opacity: 0.5;
+            border-color: rgba(244, 63, 94, 0.15);
+        }
+
+        .appt-meta {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .cancel-btn {
+            background: rgba(244, 63, 94, 0.1);
+            color: var(--danger-color);
+            border: 1px solid rgba(244, 63, 94, 0.2);
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .cancel-btn:hover {
+            background: var(--danger-color);
+            color: #000;
+        }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 35px;
+            width: 100%;
+            max-width: 520px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 25px;
+        }
+
+        .empty-msg {
+            text-align: center;
+            color: var(--text-secondary);
+            font-style: italic;
+            padding: 40px 0;
+            font-weight: 300;
+        }
+
+        /* Decorative Glow Circles */
+        .glow-circle {
+            position: absolute;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(0, 242, 254, 0.1), transparent 70%);
+            z-index: -10;
+            pointer-events: none;
+        }
+
+        .glow-c1 { width: 500px; height: 500px; top: -10%; left: -10%; }
+        .glow-c2 { width: 600px; height: 600px; bottom: -20%; right: -10%; }
+
+        /* Chat bubble styles */
+        .chat-bubble {
+            max-width: 75%;
+            padding: 12px 18px;
+            border-radius: 16px;
+            font-size: 0.95rem;
+            line-height: 1.4;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .chat-bubble.user {
+            background-color: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+            color: var(--text-primary);
+        }
+        .chat-bubble.agent {
+            background: linear-gradient(135deg, rgba(0, 242, 254, 0.15), rgba(79, 172, 254, 0.15));
+            border: 1px solid rgba(0, 242, 254, 0.3);
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+            color: var(--accent-start);
+            box-shadow: 0 0 15px rgba(0, 242, 254, 0.05);
+        }
+        .chat-bubble .sender-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+        }
+        .chat-bubble.agent .sender-label {
+            color: var(--accent-end);
+        }
+        .chat-bubble .time-label {
+            font-size: 0.7rem;
+            color: rgba(255, 255, 255, 0.25);
+            align-self: flex-end;
+        }
+        /* Live pulsing indicator */
+        .live-pulsing {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--danger-color);
+            box-shadow: 0 0 10px var(--danger-color);
+            display: inline-block;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.5; }
+            100% { transform: scale(0.9); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="glow-circle glow-c1"></div>
+    <div class="glow-circle glow-c2"></div>
+
+    <!-- 1. Authentication View -->
+    <div id="authContainer" class="glass-panel">
+        <h2>GRAVITY GATEWAY</h2>
+        <p>Dynamic Multi-Tenant Voice Assistant Command Center</p>
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="usernameInput">Administrator Username</label>
+                <input type="text" id="usernameInput" class="form-control" placeholder="admin" required autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label for="passwordInput">Secret Key / Password</label>
+                <input type="password" id="passwordInput" class="form-control" placeholder="••••••••" required autocomplete="current-password">
+            </div>
+            <button type="submit" id="authBtn" class="btn">SECURE ACCESS</button>
+            <div id="authError" style="color: var(--danger-color); font-size: 0.85rem; margin-top: 15px; display: none;"></div>
+        </form>
+    </div>
+
+    <!-- 2. Workspace View -->
+    <div id="workspaceContainer" class="glass-panel">
+        <header>
+            <div>
+                <h1>GRAVITY ORCHESTRATION</h1>
+                <p style="color: var(--text-secondary); font-size: 0.95rem; margin-top: 4px;">Dynamic Multi-Tenant Telephony and VAD Pipeline</p>
+            </div>
+            <div class="header-controls">
+                <span class="user-tag" id="userTag">Role: Admin</span>
+                <button id="logoutBtn" class="btn btn-secondary" style="width: auto; padding: 10px 20px;">LOGOUT</button>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <div class="tabs">
+            <button id="tabDashboard" class="tab-btn active">Live Operations</button>
+            <button id="tabStudio" class="tab-btn">Agent Studio</button>
+            <button id="tabLogs" class="tab-btn">Call History & Logs</button>
+        </div>
+
+        <!-- TAB CONTENT: Dashboard & Live Operations -->
+        <div id="contentDashboard" class="tab-content active">
+            <div class="dashboard-grid">
+                
+                <!-- WebRTC sandbox connection -->
+                <div class="panel-card">
+                    <div class="panel-title">🎙️ Live Sandbox Test</div>
+                    
+                    <div class="form-group">
+                        <label for="sandboxAgentSelect">Select Business Agent Profile</label>
+                        <select id="sandboxAgentSelect" class="form-control"></select>
+                    </div>
+
+                    <div class="status-card">
+                        <span style="color: var(--text-secondary);">Engine Handshake:</span>
+                        <span style="font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                            <span id="statusDot" class="status-dot"></span>
+                            <span id="statusText">Ready</span>
+                        </span>
+                    </div>
+
+                    <button id="startSandboxBtn" class="btn">⚡ INITIATE BRAIN PIPELINE</button>
+                </div>
+
+                <!-- Outbound SIP dialing -->
+                <div class="panel-card">
+                    <div class="panel-title">📞 Telephony Dialing</div>
+                    <div class="form-group">
+                        <label for="outboundPhoneInput">Destination Number</label>
+                        <input type="text" id="outboundPhoneInput" class="form-control" placeholder="e.g. 499 or external phone">
+                    </div>
+                    <div class="form-group">
+                        <label for="outboundAgentSelect">Place Call Mapped to Profile</label>
+                        <select id="outboundAgentSelect" class="form-control"></select>
+                    </div>
+                    <button id="triggerOutboundBtn" class="btn">Dial Outward SIP Participant</button>
+                </div>
+
+                <!-- Appointments isolated roster -->
+                <div class="panel-card" style="grid-column: span 2;">
+                    <div class="panel-title">📅 Dynamic Roster for Selected Business</div>
+                    <div class="form-group" style="max-width: 320px; margin-bottom: 20px;">
+                        <label for="filterRosterSelect">Filter Bookings by Business</label>
+                        <select id="filterRosterSelect" class="form-control"></select>
+                    </div>
+                    <div class="appointments-list" id="appointmentsContainer">
+                        <div class="empty-msg">No appointments loaded yet.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB CONTENT: Agent Studio CRUD -->
+        <div id="contentStudio" class="tab-content">
+            <div class="dashboard-grid">
+                
+                <!-- Business List -->
+                <div class="panel-card" style="display: flex; flex-direction: column;">
+                    <div class="panel-title" style="justify-content: space-between;">
+                        <span>🏢 Active Business Mappings</span>
+                        <button id="openCreateModalBtn" class="btn" style="width: auto; padding: 8px 16px; font-size: 0.85rem;">+ Create Agent</button>
+                    </div>
+                    <div class="business-list" id="businessContainer">
+                        <div class="empty-msg">Loading business directory...</div>
+                    </div>
+                </div>
+
+                <!-- Studio Documentation details -->
+                <div class="panel-card">
+                    <div class="panel-title">💡 Developer Notes</div>
+                    <p style="color: var(--text-secondary); line-height: 1.6; font-size: 0.95rem; margin-bottom: 15px;">
+                        Creating a business profile dynamically provisions a dedicated **SIP Inbound Trunk** and **SIP Dispatch Rule** in LiveKit.
+                    </p>
+                    <p style="color: var(--text-secondary); line-height: 1.6; font-size: 0.95rem; margin-bottom: 15px;">
+                        The inbound caller's extension number maps to the trunk list. When matched, LiveKit forwards the call into the room and injects the <code>extension</code> attribute into the participant attributes.
+                    </p>
+                    <p style="color: var(--text-secondary); line-height: 1.6; font-size: 0.95rem;">
+                        Our worker <code>agent.py</code> dynamically intercepts the extension, queries MongoDB, and hot-swaps the system prompt, Kokoro Voice settings, and DB tool instances dynamically with zero service downtime.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB CONTENT: Call History & Logs -->
+        <div id="contentLogs" class="tab-content">
+            <div class="dashboard-grid">
+                
+                <!-- Live active sessions -->
+                <div class="panel-card" style="grid-column: span 2;">
+                    <div class="panel-title">🔴 Active Calls</div>
+                    <div id="activeCallsContainer" class="appointments-list">
+                        <div class="empty-msg">No active call sessions at the moment.</div>
+                    </div>
+                </div>
+
+                <!-- Archived calls roster -->
+                <div class="panel-card" style="grid-column: span 2;">
+                    <div class="panel-title">📜 Archived Call History</div>
+                    <div class="form-group" style="max-width: 320px; margin-bottom: 20px;">
+                        <label for="filterCallsSelect">Filter History by Business</label>
+                        <select id="filterCallsSelect" class="form-control"></select>
+                    </div>
+                    <div class="appointments-list" id="completedCallsContainer">
+                        <div class="empty-msg">No completed call logs loaded yet.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL OVERLAY: Create Business Profile -->
+    <div class="modal-overlay" id="bizModalOverlay">
+        <div class="modal glass-panel">
+            <h3 id="modalTitle" style="font-size: 1.4rem; margin-bottom: 20px;">Deploy New Business Profile</h3>
+            <form id="bizForm">
+                <input type="hidden" id="bizId">
+                <div class="form-group">
+                    <label for="bizName">Business / Agent Name</label>
+                    <input type="text" id="bizName" class="form-control" placeholder="Compusource" required>
+                </div>
+                <div class="form-group" id="extensionGroup">
+                    <label for="bizExtension">Dynamic Extension number</label>
+                    <input type="text" id="bizExtension" class="form-control" placeholder="499" required>
+                </div>
+                <div class="form-group">
+                    <label for="bizVoice">Kokoro Voice Profile</label>
+                    <select id="bizVoice" class="form-control">
+                        <option value="af_bella">af_bella (English Female - Bella)</option>
+                        <option value="af_sarah">af_sarah (English Female - Sarah)</option>
+                        <option value="af_sky">af_sky (English Female - Sky)</option>
+                        <option value="af_nicole">af_nicole (English Female - Nicole)</option>
+                        <option value="am_adam">am_adam (English Male - Adam)</option>
+                        <option value="am_michael">am_michael (English Male - Michael)</option>
+                        <option value="bf_emma">bf_emma (British Female - Emma)</option>
+                        <option value="bm_george">bm_george (British Male - George)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Assigned Skillsets</label>
+                    <div style="display: flex; gap: 15px; margin-top: 5px;">
+                        <label style="display: flex; align-items: center; gap: 8px; text-transform: none; font-size: 0.95rem; color: var(--text-primary);">
+                            <input type="checkbox" id="skillAppointments" checked value="appointments" style="transform: scale(1.15);"> appointments DB
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="bizPrompt">System Prompts & Instructions</label>
+                    <textarea id="bizPrompt" class="form-control" rows="6" placeholder="Instructions..." required style="resize: vertical;"></textarea>
+                </div>
+                <div class="modal-buttons">
+                    <button type="submit" id="saveBizBtn" class="btn">DEPLOY LIVE</button>
+                    <button type="button" id="closeBizModalBtn" class="btn btn-secondary">CANCEL</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL OVERLAY: Dialogue Transcript -->
+    <div class="modal-overlay" id="transcriptModalOverlay">
+        <div class="modal glass-panel" style="max-width: 680px; display: flex; flex-direction: column; max-height: 80vh;">
+            <h3 id="transcriptTitle" style="font-size: 1.4rem; margin-bottom: 20px;">Conversational Transcript</h3>
+            <div id="transcriptBubbleContainer" style="flex-grow: 1; overflow-y: auto; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; min-height: 250px; max-height: 450px;">
+                <div class="empty-msg">No conversation turns recorded.</div>
+            </div>
+            <div class="modal-buttons" style="margin-top: 0;">
+                <button type="button" id="closeTranscriptBtn" class="btn btn-secondary">CLOSE TRANSCRIPT</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = window.location.protocol + "//" + window.location.hostname + ":10201";
+        const LIVEKIT_WS = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.hostname + ":7800";
+
+        // Global State
+        let token = localStorage.getItem("gravity_token");
+        let activeTab = "dashboard";
+        let businesses = [];
+        let appointments = [];
+        let activeCalls = [];
+        let completedCalls = [];
+        let selectedCallForTranscript = null;
+        let transcriptIntervalId = null;
+
+        // Auth elements
+        const authContainer = document.getElementById("authContainer");
+        const workspaceContainer = document.getElementById("workspaceContainer");
+        const loginForm = document.getElementById("loginForm");
+        const usernameInput = document.getElementById("usernameInput");
+        const passwordInput = document.getElementById("passwordInput");
+        const authError = document.getElementById("authError");
+        const logoutBtn = document.getElementById("logoutBtn");
+        const userTag = document.getElementById("userTag");
+
+        // Tabs
+        const tabDashboard = document.getElementById("tabDashboard");
+        const tabStudio = document.getElementById("tabStudio");
+        const tabLogs = document.getElementById("tabLogs");
+        const contentDashboard = document.getElementById("contentDashboard");
+        const contentStudio = document.getElementById("contentStudio");
+        const contentLogs = document.getElementById("contentLogs");
+
+        // Call Logs elements
+        const activeCallsContainer = document.getElementById("activeCallsContainer");
+        const completedCallsContainer = document.getElementById("completedCallsContainer");
+        const filterCallsSelect = document.getElementById("filterCallsSelect");
+        const transcriptModalOverlay = document.getElementById("transcriptModalOverlay");
+        const closeTranscriptBtn = document.getElementById("closeTranscriptBtn");
+        const transcriptBubbleContainer = document.getElementById("transcriptBubbleContainer");
+        const transcriptTitle = document.getElementById("transcriptTitle");
+
+        // Dashboard controls
+        const sandboxAgentSelect = document.getElementById("sandboxAgentSelect");
+        const outboundAgentSelect = document.getElementById("outboundAgentSelect");
+        const filterRosterSelect = document.getElementById("filterRosterSelect");
+        const statusText = document.getElementById("statusText");
+        const statusDot = document.getElementById("statusDot");
+        const startSandboxBtn = document.getElementById("startSandboxBtn");
+        const triggerOutboundBtn = document.getElementById("triggerOutboundBtn");
+        const outboundPhoneInput = document.getElementById("outboundPhoneInput");
+        const appointmentsContainer = document.getElementById("appointmentsContainer");
+
+        // Studio controls
+        const businessContainer = document.getElementById("businessContainer");
+        const openCreateModalBtn = document.getElementById("openCreateModalBtn");
+        const bizModalOverlay = document.getElementById("bizModalOverlay");
+        const closeBizModalBtn = document.getElementById("closeBizModalBtn");
+        const bizForm = document.getElementById("bizForm");
+        const modalTitle = document.getElementById("modalTitle");
+        const extensionGroup = document.getElementById("extensionGroup");
+
+        // Biz Form Inputs
+        const bizId = document.getElementById("bizId");
+        const bizName = document.getElementById("bizName");
+        const bizExtension = document.getElementById("bizExtension");
+        const bizVoice = document.getElementById("bizVoice");
+        const skillAppointments = document.getElementById("skillAppointments");
+        const bizPrompt = document.getElementById("bizPrompt");
+        const saveBizBtn = document.getElementById("saveBizBtn");
+
+        // Check authentication state
+        function checkAuth() {
+            if (token) {
+                authContainer.style.display = "none";
+                workspaceContainer.style.display = "block";
+                userTag.textContent = "Admin Root";
+                loadBusinesses();
+            } else {
+                authContainer.style.display = "block";
+                workspaceContainer.style.display = "none";
+            }
+        }
+
+        // Login Handler
+        loginForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            authError.style.display = "none";
+            
+            try {
+                const res = await fetch(API_URL + "/v1/auth/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        username: usernameInput.value,
+                        password: passwordInput.value
+                    })
+                });
+                
+                const data = await res.json();
+                if (res.ok) {
+                    token = data.token;
+                    localStorage.setItem("gravity_token", token);
+                    passwordInput.value = "";
+                    checkAuth();
+                } else {
+                    authError.textContent = data.error || "Authentication failed";
+                    authError.style.display = "block";
+                }
+            } catch (err) {
+                authError.textContent = "Server connection lost: " + err.message;
+                authError.style.display = "block";
+            }
+        });
+
+        // Logout
+        logoutBtn.addEventListener("click", () => {
+            token = null;
+            localStorage.removeItem("gravity_token");
+            checkAuth();
+        });
+
+        // Tab Navigation
+        tabDashboard.addEventListener("click", () => {
+            tabDashboard.classList.add("active");
+            tabStudio.classList.remove("active");
+            tabLogs.classList.remove("active");
+            contentDashboard.classList.add("active");
+            contentStudio.classList.remove("active");
+            contentLogs.classList.remove("active");
+        });
+
+        tabStudio.addEventListener("click", () => {
+            tabDashboard.classList.remove("active");
+            tabStudio.classList.add("active");
+            tabLogs.classList.remove("active");
+            contentDashboard.classList.remove("active");
+            contentStudio.classList.add("active");
+            contentLogs.classList.remove("active");
+        });
+
+        tabLogs.addEventListener("click", () => {
+            tabDashboard.classList.remove("active");
+            tabStudio.classList.remove("active");
+            tabLogs.classList.add("active");
+            contentDashboard.classList.remove("active");
+            contentStudio.classList.remove("active");
+            contentLogs.classList.add("active");
+            loadCalls();
+        });
+
+        // Load Business list from MongoDB
+        async function loadBusinesses() {
+            try {
+                const res = await fetch(API_URL + "/v1/businesses");
+                if (!res.ok) throw new Error("API call failed");
+                businesses = await res.json();
+                
+                renderDropdowns();
+                renderBusinesses();
+                loadAppointments();
+            } catch (err) {
+                console.error("Error loading businesses directory:", err);
+            }
+        }
+
+        // Safely render dropdowns
+        function renderDropdowns() {
+            sandboxAgentSelect.replaceChildren();
+            outboundAgentSelect.replaceChildren();
+            filterRosterSelect.replaceChildren();
+
+            // Default Option for Filter
+            const allOption = document.createElement("option");
+            allOption.value = "";
+            allOption.textContent = "Show All Bookings";
+            filterRosterSelect.appendChild(allOption);
+
+            businesses.forEach(biz => {
+                const opt1 = document.createElement("option");
+                opt1.value = biz.extension;
+                opt1.textContent = biz.name + " (" + biz.extension + ")";
+                sandboxAgentSelect.appendChild(opt1);
+
+                const opt2 = document.createElement("option");
+                opt2.value = biz.extension;
+                opt2.textContent = biz.name + " (" + biz.extension + ")";
+                outboundAgentSelect.appendChild(opt2);
+
+                const opt3 = document.createElement("option");
+                opt3.value = biz._id;
+                opt3.textContent = biz.name;
+                filterRosterSelect.appendChild(opt3);
+            });
+
+            // Call Filter Dropdown
+            filterCallsSelect.replaceChildren();
+            const allCallsOption = document.createElement("option");
+            allCallsOption.value = "";
+            allCallsOption.textContent = "Show All Completed Calls";
+            filterCallsSelect.appendChild(allCallsOption);
+            businesses.forEach(biz => {
+                const opt = document.createElement("option");
+                opt.value = biz._id;
+                opt.textContent = biz.name;
+                filterCallsSelect.appendChild(opt);
+            });
+        }
+
+        // Safely render businesses in Agent Studio
+        function renderBusinesses() {
+            businessContainer.replaceChildren();
+            if (businesses.length === 0) {
+                const msg = document.createElement("div");
+                msg.className = "empty-msg";
+                msg.textContent = "No business agents active. Click 'Create Agent' to start.";
+                businessContainer.appendChild(msg);
+                return;
+            }
+
+            businesses.forEach(biz => {
+                const card = document.createElement("div");
+                card.className = "business-card";
+
+                const details = document.createElement("div");
+                details.className = "biz-details";
+
+                const title = document.createElement("h3");
+                title.textContent = biz.name;
+
+                const meta = document.createElement("div");
+                meta.className = "biz-meta";
+
+                const extSpan = document.createElement("span");
+                extSpan.textContent = "Ext: " + biz.extension;
+
+                const voiceSpan = document.createElement("span");
+                voiceSpan.textContent = "Voice: " + biz.voice;
+
+                meta.appendChild(extSpan);
+                meta.appendChild(voiceSpan);
+                details.appendChild(title);
+                details.appendChild(meta);
+
+                const actions = document.createElement("div");
+                actions.className = "biz-actions";
+
+                const editBtn = document.createElement("button");
+                editBtn.className = "cancel-btn";
+                editBtn.style.color = "var(--accent-end)";
+                editBtn.style.borderColor = "var(--accent-end)";
+                editBtn.style.backgroundColor = "transparent";
+                editBtn.textContent = "Edit";
+                editBtn.addEventListener("click", () => openEditModal(biz));
+
+                const delBtn = document.createElement("button");
+                delBtn.className = "cancel-btn";
+                delBtn.textContent = "Delete";
+                delBtn.addEventListener("click", () => deleteBiz(biz._id));
+
+                actions.appendChild(editBtn);
+                actions.appendChild(delBtn);
+
+                card.appendChild(details);
+                card.appendChild(actions);
+                businessContainer.appendChild(card);
+            });
+        }
+
+        // Delete Business
+        async function deleteBiz(id) {
+            if (!confirm("Are you sure you want to delete this business? All appointments and dynamic SIP dialplans will be removed.")) return;
+            try {
+                const res = await fetch(API_URL + "/v1/businesses/" + id, {
+                    method: "DELETE",
+                    headers: { "Authorization": "Bearer " + token }
+                });
+                if (res.ok) {
+                    loadBusinesses();
+                } else {
+                    alert("Delete failed.");
+                }
+            } catch (err) {
+                alert("Connection failed: " + err.message);
+            }
+        }
+
+        // Modal triggers
+        openCreateModalBtn.addEventListener("click", () => {
+            bizForm.reset();
+            bizId.value = "";
+            modalTitle.textContent = "Deploy New Business Profile";
+            extensionGroup.style.display = "flex";
+            bizExtension.required = true;
+            saveBizBtn.textContent = "DEPLOY LIVE";
+            bizModalOverlay.style.display = "flex";
+        });
+
+        closeBizModalBtn.addEventListener("click", () => {
+            bizModalOverlay.style.display = "none";
+        });
+
+        function openEditModal(biz) {
+            bizId.value = biz._id;
+            bizName.value = biz.name;
+            bizExtension.value = biz.extension;
+            extensionGroup.style.display = "none";
+            bizExtension.required = false;
+            bizVoice.value = biz.voice;
+            skillAppointments.checked = biz.skills.includes("appointments");
+            bizPrompt.value = biz.prompt;
+            modalTitle.textContent = "Update Agent Profile";
+            saveBizBtn.textContent = "SAVE CHANGES";
+            bizModalOverlay.style.display = "flex";
+        }
+
+        // Submit form (Create / Update)
+        bizForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            
+            const isEdit = bizId.value !== "";
+            const url = isEdit ? API_URL + "/v1/businesses/" + bizId.value : API_URL + "/v1/businesses";
+            const method = isEdit ? "PUT" : "POST";
+            
+            const skills = [];
+            if (skillAppointments.checked) skills.push("appointments");
+            
+            const payload = {
+                name: bizName.value,
+                voice: bizVoice.value,
+                skills: skills,
+                prompt: bizPrompt.value
+            };
+            if (!isEdit) {
+                payload.extension = bizExtension.value;
+            }
+
+            saveBizBtn.disabled = true;
+            saveBizBtn.textContent = "PROCESSING...";
+
+            try {
+                const res = await fetch(url, {
+                    method: method,
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": "Bearer " + token
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await res.json();
+                if (res.ok) {
+                    bizModalOverlay.style.display = "none";
+                    loadBusinesses();
+                } else {
+                    alert("Operation failed: " + (data.error || "Unknown error"));
+                }
+            } catch (err) {
+                alert("Connection failed: " + err.message);
+            } finally {
+                saveBizBtn.disabled = false;
+            }
+        });
+
+        // Load Appointments isolated
+        filterRosterSelect.addEventListener("change", loadAppointments);
+
+        async function loadAppointments() {
+            const bizFilter = filterRosterSelect.value;
+            const query = bizFilter ? "?business_id=" + bizFilter : "";
+            
+            try {
+                const res = await fetch(API_URL + "/v1/appointments" + query);
+                if (!res.ok) throw new Error("API call failed");
+                appointments = await res.json();
+                
+                renderAppointments();
+            } catch (err) {
+                console.error("Failed to load appointments:", err);
+            }
+        }
+
+        // Render Appointments safely
+        function renderAppointments() {
+            appointmentsContainer.replaceChildren();
+            if (appointments.length === 0) {
+                const msg = document.createElement("div");
+                msg.className = "empty-msg";
+                msg.textContent = "No appointments registered for this profile.";
+                appointmentsContainer.appendChild(msg);
+                return;
+            }
+
+            appointments.forEach(appt => {
+                const card = document.createElement("div");
+                card.className = "appointment-card " + (appt.status || "scheduled");
+
+                const details = document.createElement("div");
+                
+                const apptTitle = document.createElement("strong");
+                apptTitle.textContent = appt.name;
+                
+                const apptReason = document.createElement("span");
+                apptReason.textContent = " - " + (appt.reason || "No description");
+
+                const meta = document.createElement("div");
+                meta.className = "appt-meta";
+
+                const apptTime = document.createElement("span");
+                apptTime.textContent = "📅 " + appt.time;
+
+                const apptPhone = document.createElement("span");
+                apptPhone.textContent = "📞 " + appt.phone;
+
+                meta.appendChild(apptTime);
+                meta.appendChild(apptPhone);
+                details.appendChild(apptTitle);
+                details.appendChild(apptReason);
+                details.appendChild(meta);
+
+                card.appendChild(details);
+
+                if (appt.status === "scheduled") {
+                    const cancel = document.createElement("button");
+                    cancel.className = "cancel-btn";
+                    cancel.textContent = "Cancel";
+                    cancel.addEventListener("click", async () => {
+                        cancel.disabled = true;
+                        cancel.textContent = "Closing...";
+                        try {
+                            const cancelRes = await fetch(API_URL + "/v1/appointments/" + appt._id, { method: "DELETE" });
+                            if (cancelRes.ok) {
+                                loadAppointments();
+                            } else {
+                                cancel.disabled = false;
+                                cancel.textContent = "Cancel";
+                            }
+                        } catch (err) {
+                            cancel.disabled = false;
+                            cancel.textContent = "Cancel";
+                        }
+                    });
+                    card.appendChild(cancel);
+                } else {
+                    const badge = document.createElement("span");
+                    badge.style.color = "var(--text-secondary)";
+                    badge.style.fontSize = "0.85rem";
+                    badge.textContent = "Cancelled";
+                    card.appendChild(badge);
+                }
+
+                appointmentsContainer.appendChild(card);
+            });
+        }
+
+        // Call Logs & Transcripts functions
+        async function loadCalls() {
+            try {
+                // Fetch active calls
+                const activeRes = await fetch(API_URL + "/v1/calls/active");
+                if (activeRes.ok) {
+                    activeCalls = await activeRes.json();
+                    renderActiveCalls();
+                }
+
+                // Fetch completed calls
+                const filterBiz = filterCallsSelect.value;
+                const query = filterBiz ? "?business_id=" + filterBiz : "";
+                const historyRes = await fetch(API_URL + "/v1/calls/history" + query);
+                if (historyRes.ok) {
+                    completedCalls = await historyRes.json();
+                    renderCompletedCalls();
+                }
+            } catch (err) {
+                console.error("Error loading calls:", err);
+            }
+        }
+
+        filterCallsSelect.addEventListener("change", loadCalls);
+
+        function renderActiveCalls() {
+            activeCallsContainer.replaceChildren();
+            if (activeCalls.length === 0) {
+                const msg = document.createElement("div");
+                msg.className = "empty-msg";
+                msg.textContent = "No active call sessions at the moment.";
+                activeCallsContainer.appendChild(msg);
+                return;
+            }
+
+            activeCalls.forEach(call => {
+                const card = document.createElement("div");
+                card.className = "appointment-card";
+                card.style.borderColor = "rgba(16, 185, 129, 0.2)";
+
+                const details = document.createElement("div");
+
+                const titleRow = document.createElement("div");
+                titleRow.style.display = "flex";
+                titleRow.style.alignItems = "center";
+                titleRow.style.gap = "8px";
+
+                const dot = document.createElement("span");
+                dot.className = "live-pulsing";
+
+                const phone = document.createElement("strong");
+                phone.textContent = call.phone_number;
+
+                const bizTag = document.createElement("span");
+                bizTag.style.color = "var(--accent-start)";
+                bizTag.style.fontSize = "0.85rem";
+                bizTag.textContent = " -> Mapped to: " + call.business_name;
+
+                titleRow.appendChild(dot);
+                titleRow.appendChild(phone);
+                titleRow.appendChild(bizTag);
+
+                const meta = document.createElement("div");
+                meta.className = "appt-meta";
+
+                const time = document.createElement("span");
+                time.textContent = "📅 Started: " + new Date(call.start_time).toLocaleTimeString();
+
+                const room = document.createElement("span");
+                room.textContent = "🔑 Room: " + call.room_name;
+
+                meta.appendChild(time);
+                meta.appendChild(room);
+
+                details.appendChild(titleRow);
+                details.appendChild(meta);
+
+                const btn = document.createElement("button");
+                btn.className = "cancel-btn";
+                btn.style.color = "var(--success-color)";
+                btn.style.borderColor = "var(--success-color)";
+                btn.style.backgroundColor = "transparent";
+                btn.textContent = "View Live Transcript";
+                btn.addEventListener("click", () => openTranscriptModal(call._id, true));
+
+                card.appendChild(details);
+                card.appendChild(btn);
+                activeCallsContainer.appendChild(card);
+            });
+        }
+
+        function renderCompletedCalls() {
+            completedCallsContainer.replaceChildren();
+            if (completedCalls.length === 0) {
+                const msg = document.createElement("div");
+                msg.className = "empty-msg";
+                msg.textContent = "No completed calls recorded in history.";
+                completedCallsContainer.appendChild(msg);
+                return;
+            }
+
+            completedCalls.forEach(call => {
+                const card = document.createElement("div");
+                card.className = "appointment-card";
+
+                const details = document.createElement("div");
+
+                const titleRow = document.createElement("div");
+                const phone = document.createElement("strong");
+                phone.textContent = call.phone_number;
+
+                const bizTag = document.createElement("span");
+                bizTag.style.color = "var(--text-secondary)";
+                bizTag.style.fontSize = "0.85rem";
+                bizTag.textContent = " -> Handled by: " + call.business_name;
+
+                titleRow.appendChild(phone);
+                titleRow.appendChild(bizTag);
+
+                const meta = document.createElement("div");
+                meta.className = "appt-meta";
+
+                const time = document.createElement("span");
+                time.textContent = "📅 Date: " + new Date(call.start_time).toLocaleString();
+
+                const dur = document.createElement("span");
+                const totalSec = Math.round(call.duration_seconds || 0);
+                const mins = Math.floor(totalSec / 60);
+                const secs = totalSec % 60;
+                dur.textContent = "⏱️ Duration: " + mins.toString().padStart(2, '0') + ":" + secs.toString().padStart(2, '0');
+
+                meta.appendChild(time);
+                meta.appendChild(dur);
+
+                details.appendChild(titleRow);
+                details.appendChild(meta);
+
+                const btn = document.createElement("button");
+                btn.className = "cancel-btn";
+                btn.style.color = "var(--accent-end)";
+                btn.style.borderColor = "var(--accent-end)";
+                btn.style.backgroundColor = "transparent";
+                btn.textContent = "View Transcript";
+                btn.addEventListener("click", () => openTranscriptModal(call._id, false));
+
+                card.appendChild(details);
+                card.appendChild(btn);
+                completedCallsContainer.appendChild(card);
+            });
+        }
+
+        async function openTranscriptModal(callId, isLive) {
+            selectedCallForTranscript = callId;
+            transcriptModalOverlay.style.display = "flex";
+            transcriptBubbleContainer.replaceChildren();
+            
+            const msg = document.createElement("div");
+            msg.className = "empty-msg";
+            msg.textContent = "Loading conversation...";
+            transcriptBubbleContainer.appendChild(msg);
+
+            await updateTranscript();
+
+            // Clear any active polling
+            if (transcriptIntervalId) clearInterval(transcriptIntervalId);
+
+            if (isLive) {
+                transcriptTitle.textContent = "🔴 Conversational Transcript (Live)";
+                transcriptIntervalId = setInterval(updateTranscript, 3000);
+            } else {
+                transcriptTitle.textContent = "📜 Conversational Transcript (Completed)";
+            }
+        }
+
+        async function updateTranscript() {
+            if (!selectedCallForTranscript) return;
+            try {
+                const res = await fetch(API_URL + "/v1/calls/" + selectedCallForTranscript);
+                if (!res.ok) return;
+                const call = await res.json();
+                
+                transcriptBubbleContainer.replaceChildren();
+                const transcript = call.transcript || [];
+                
+                if (transcript.length === 0) {
+                    const msg = document.createElement("div");
+                    msg.className = "empty-msg";
+                    msg.textContent = "No speaking registered yet. Dynamic pipeline is active!";
+                    transcriptBubbleContainer.appendChild(msg);
+                    return;
+                }
+
+                transcript.forEach(turn => {
+                    const bubble = document.createElement("div");
+                    bubble.className = "chat-bubble " + turn.role;
+
+                    const label = document.createElement("span");
+                    label.className = "sender-label";
+                    label.textContent = turn.role === "user" ? "Caller" : "AI Assistant (" + call.business_name + ")";
+
+                    const text = document.createElement("p");
+                    text.textContent = turn.text;
+
+                    const time = document.createElement("span");
+                    time.className = "time-label";
+                    time.textContent = new Date(turn.time).toLocaleTimeString();
+
+                    bubble.appendChild(label);
+                    bubble.appendChild(text);
+                    bubble.appendChild(time);
+                    transcriptBubbleContainer.appendChild(bubble);
+                });
+
+                // Auto-scroll to bottom
+                transcriptBubbleContainer.scrollTop = transcriptBubbleContainer.scrollHeight;
+            } catch (err) {
+                console.error("Error fetching transcript details:", err);
+            }
+        }
+
+        closeTranscriptBtn.addEventListener("click", () => {
+            selectedCallForTranscript = null;
+            if (transcriptIntervalId) {
+                clearInterval(transcriptIntervalId);
+                transcriptIntervalId = null;
+            }
+            transcriptModalOverlay.style.display = "none";
+        });
+
+        // Sandbox connection trigger
+        startSandboxBtn.addEventListener("click", async () => {
+            const ext = sandboxAgentSelect.value;
+            if (!ext) {
+                alert("Please create at least one business agent first.");
+                return;
+            }
+            
+            startSandboxBtn.disabled = true;
+            statusText.textContent = "Acquiring access token...";
+            statusDot.className = "status-dot";
+
+            try {
+                // Dynamic extension token request
+                const tokenRes = await fetch(API_URL + "/token?extension=" + ext);
+                const { token: roomToken } = await tokenRes.json();
+
+                statusText.textContent = "Establishing signaling connection...";
+                const room = new LivekitClient.Room();
+
+                room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+                    if (track.kind === "audio") {
+                        const audioEl = track.attach();
+                        document.body.appendChild(audioEl);
+                        statusText.textContent = "Active Pipeline - Speak now!";
+                        statusDot.className = "status-dot active";
+                    }
+                });
+
+                await room.connect(LIVEKIT_WS, roomToken);
+                statusText.textContent = "Waiting for dynamic agent worker...";
+
+                // Enable Browser Microphone
+                await room.localParticipant.setMicrophoneEnabled(true);
+            } catch (err) {
+                statusText.textContent = "Handshake Error: " + err.message;
+                startSandboxBtn.disabled = false;
+                statusDot.className = "status-dot";
+            }
+        });
+
+        // Trigger Outbound SIP Dialing
+        triggerOutboundBtn.addEventListener("click", async () => {
+            const phone = outboundPhoneInput.value.trim();
+            const ext = outboundAgentSelect.value;
+            
+            if (!phone) {
+                alert("Specify a destination number.");
+                return;
+            }
+
+            triggerOutboundBtn.disabled = true;
+            triggerOutboundBtn.textContent = "DIALING CALL...";
+
+            try {
+                const response = await fetch(API_URL + "/v1/call", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ phone: phone, extension: ext })
+                });
+                
+                const data = await response.json();
+                if (response.ok && data.status === "success") {
+                    alert("Outbound call successfully triggered!");
+                } else {
+                    alert("Failed to dial: " + (data.error || "Unknown response"));
+                }
+            } catch (err) {
+                alert("Outbound routing error: " + err.message);
+            } finally {
+                triggerOutboundBtn.disabled = false;
+                triggerOutboundBtn.textContent = "Dial Outward SIP Participant";
+            }
+        });
+
+        // Boot Init
+        checkAuth();
+        setInterval(loadAppointments, 5000);
+        setInterval(loadCalls, 5000);
+    </script>
+</body>
+</html>

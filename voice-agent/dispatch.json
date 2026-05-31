@@ -1,0 +1,10 @@
+{
+  "dispatch_rule": {
+    "name": "Route-499",
+    "rule": {
+      "dispatchRuleDirect": {
+        "roomName": "sip_room"
+      }
+    }
+  }
+}

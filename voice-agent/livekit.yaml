@@ -1,0 +1,9 @@
+port: 7800
+rtc:
+    tcp_port: 7881
+    udp_port: 7882
+    use_external_ip: true
+keys:
+    devkey1778495864: "devsecret1778495864"
+redis:
+    address: localhost:6379

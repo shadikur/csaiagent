@@ -1,0 +1,7 @@
+{
+  "trunk": {
+    "name": "Fusion-Outbound-Link-Whitelisted",
+    "numbers": ["499"],
+    "allowedAddresses": ["199.47.47.106"]
+  }
+}

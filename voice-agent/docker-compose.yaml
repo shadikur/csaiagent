@@ -1,0 +1,71 @@
+services:
+  livekit:
+    command: --config /livekit.yaml
+    depends_on:
+    - redis
+    image: livekit/livekit-server:latest
+    network_mode: host
+    restart: always
+    volumes:
+    - /home/compusource/voice-agent/livekit.yaml:/livekit.yaml:ro
+
+  livekit-sip:
+    depends_on:
+    - redis
+    environment:
+      LIVEKIT_API_KEY: devkey1778495864
+      LIVEKIT_API_SECRET: devsecret1778495864
+      LIVEKIT_URL: http://127.0.0.1:7800
+      LIVEKIT_WS_URL: ws://127.0.0.1:7800
+    image: livekit/sip:latest
+    network_mode: host
+    restart: always
+    volumes:
+    - /home/compusource/voice-agent/sip.yaml:/sip/config.yaml:ro
+    - /home/compusource/voice-agent/inbound.json:/inbound.json:ro
+    - /home/compusource/voice-agent/dispatch.json:/dispatch.json:ro
+
+  mongodb:
+    image: mongo:latest
+    ports:
+    - 127.0.0.1:27017:27017
+    restart: always
+    volumes:
+    - mongodb_data:/data/db
+
+  redis:
+    command: redis-server --appendonly yes
+    image: redis:7-alpine
+    network_mode: host
+    restart: always
+
+  stt:
+    environment:
+    - WHISPER_MODEL=base.en
+    image: fedirz/faster-whisper-server:latest-cuda  # Fixed explicit CUDA image tag
+    ports:
+    - 127.0.0.1:8000:8000
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+  kokoro-tts:
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
+    ports:
+    - 127.0.0.1:8880:8880
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+volumes:
+  mongodb_data: null

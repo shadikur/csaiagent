@@ -1,0 +1,16 @@
+logging:
+  level: debug
+
+redis:
+  address: localhost:6379
+
+livekit:
+  url: http://127.0.0.1:7800
+  ws_url: ws://127.0.0.1:7800
+
+# Correct Root-level SIP Server Parameters
+use_external_ip: false
+nat_1_to_1_ip: "199.47.47.247"
+media_nat_1_to_1_ip: "199.47.47.247"
+sip_port: 5060
+rtp_port: "10000-20000"
