@@ -734,6 +734,7 @@
         let completedCalls = [];
         let selectedCallForTranscript = null;
         let transcriptIntervalId = null;
+        let activeRoom = null;
 
         // Auth elements
         const authContainer = document.getElementById("authContainer");
@@ -1406,6 +1407,22 @@
 
         // Sandbox connection trigger
         startSandboxBtn.addEventListener("click", async () => {
+            if (activeRoom) {
+                statusText.textContent = "Disconnecting sandbox session...";
+                startSandboxBtn.disabled = true;
+                try {
+                    await activeRoom.disconnect();
+                } catch (err) {
+                    console.error("Error disconnecting room:", err);
+                }
+                activeRoom = null;
+                startSandboxBtn.textContent = "⚡ INITIATE BRAIN PIPELINE";
+                startSandboxBtn.disabled = false;
+                statusText.textContent = "Engine Handshake:";
+                statusDot.className = "status-dot";
+                return;
+            }
+
             const ext = sandboxAgentSelect.value;
             if (!ext) {
                 alert("Please create at least one business agent first.");
@@ -1418,11 +1435,12 @@
 
             try {
                 // Dynamic extension token request
-                const tokenRes = await fetch(API_URL + "/token?extension=" + ext);
+                const tokenRes = await fetch(API_URL + "/token?extension=" + ext + "&_t=" + Date.now());
                 const { token: roomToken } = await tokenRes.json();
 
                 statusText.textContent = "Establishing signaling connection...";
                 const room = new LivekitClient.Room();
+                activeRoom = room;
 
                 room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
                     if (track.kind === "audio") {
@@ -1433,15 +1451,27 @@
                     }
                 });
 
+                room.on(LivekitClient.RoomEvent.Disconnected, () => {
+                    activeRoom = null;
+                    startSandboxBtn.textContent = "⚡ INITIATE BRAIN PIPELINE";
+                    startSandboxBtn.disabled = false;
+                    statusText.textContent = "Engine Handshake:";
+                    statusDot.className = "status-dot";
+                });
+
                 await room.connect(LIVEKIT_WS, roomToken);
                 statusText.textContent = "Waiting for dynamic agent worker...";
 
                 // Enable Browser Microphone
                 await room.localParticipant.setMicrophoneEnabled(true);
+                
+                startSandboxBtn.textContent = "🛑 TERMINATE BRAIN PIPELINE";
+                startSandboxBtn.disabled = false;
             } catch (err) {
                 statusText.textContent = "Handshake Error: " + err.message;
                 startSandboxBtn.disabled = false;
                 statusDot.className = "status-dot";
+                activeRoom = null;
             }
         });
 

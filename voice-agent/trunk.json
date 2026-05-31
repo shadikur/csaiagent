@@ -1,0 +1,7 @@
+{
+  "trunk": {
+    "name": "FusionPBX",
+    "numbers": ["499"],
+    "allowed_addresses": ["199.47.47.106"]
+  }
+}

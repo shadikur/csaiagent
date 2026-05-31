@@ -366,15 +366,25 @@ async def get_token(request: Request):
         room_list=True,
         can_update_own_metadata=True
     )
-    token = AccessToken(key, secret).with_grants(grant)
-    token.identity = f"web-user-{int(time.time())}"
-    token.name = "web-test-user"
-    token.metadata = json.dumps({"agent_to_dispatch": "*", "extension": extension})
+    # Use builder methods so metadata claims are correctly compiled into the JWT instead of ignored/empty
+    token = (AccessToken(key, secret)
+             .with_grants(grant)
+             .with_identity(f"web-user-{int(time.time())}")
+             .with_name("web-test-user")
+             .with_metadata(json.dumps({"agent_to_dispatch": "*", "extension": extension})))
     
-    return JSONResponse({
-        "token": token.to_jwt(),
-        "room": room_name
-    })
+    headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    }
+    return JSONResponse(
+        content={
+            "token": token.to_jwt(),
+            "room": room_name
+        },
+        headers=headers
+    )
 
 # ----------------- Outbound Telephony Dialing Endpoint -----------------
 
@@ -534,6 +544,9 @@ async def get_call_details(call_id: str):
     except Exception as e:
         logger.error(f"Error getting call details: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+from fastapi.staticfiles import StaticFiles
+app.mount("/", StaticFiles(directory="/home/compusource/voice-web-ui", html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn

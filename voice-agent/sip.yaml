@@ -14,3 +14,7 @@ nat_1_to_1_ip: "199.47.47.247"
 media_nat_1_to_1_ip: "199.47.47.247"
 sip_port: 5060
 rtp_port: "10000-20000"
+
+sip:
+  ip_rate_limit: 100
+  max_lines: 100

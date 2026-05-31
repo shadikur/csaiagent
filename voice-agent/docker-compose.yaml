@@ -10,20 +10,22 @@ services:
     - /home/compusource/voice-agent/livekit.yaml:/livekit.yaml:ro
 
   livekit-sip:
-    depends_on:
-    - redis
+    image: livekit/sip:latest
+    container_name: voice-agent-livekit-sip-1
+    restart: always
+    network_mode: host
     environment:
       LIVEKIT_API_KEY: devkey1778495864
       LIVEKIT_API_SECRET: devsecret1778495864
       LIVEKIT_URL: http://127.0.0.1:7800
       LIVEKIT_WS_URL: ws://127.0.0.1:7800
-    image: livekit/sip:latest
-    network_mode: host
-    restart: always
     volumes:
-    - /home/compusource/voice-agent/sip.yaml:/sip/config.yaml:ro
-    - /home/compusource/voice-agent/inbound.json:/inbound.json:ro
-    - /home/compusource/voice-agent/dispatch.json:/dispatch.json:ro
+      # FIXED: Map your host file directly to the path the binary is looking for
+      - /home/compusource/voice-agent/sip.yaml:/sip/config.yaml:ro
+      - /home/compusource/voice-agent/inbound.json:/inbound.json:ro
+      - /home/compusource/voice-agent/dispatch.json:/dispatch.json:ro
+    depends_on:
+      - redis
 
   mongodb:
     image: mongo:latest

@@ -1,9 +1,8 @@
 {
   "trunk": {
-    "name": "Fusion-Outbound-Link",
-    "address": "csource33176.pbxm.awbc.com",
-    "numbers": ["499"],
-    "authUsername": "499",
-    "authPassword": "qx0UTUukPz"
+    "name": "Fusion-Inbound",
+    "numbers": [
+      "499"
+    ]
   }
 }

@@ -1,9 +1,9 @@
 {
   "dispatch_rule": {
-    "name": "Route-499",
+    "name": "Route-To-Agent",
     "rule": {
-      "dispatchRuleDirect": {
-        "roomName": "sip_room"
+      "dispatchRuleIndividual": {
+        "roomPrefix": "sip_room"
       }
     }
   }
