@@ -77,6 +77,12 @@ def load_keys():
 # Helper to automatically register Inbound SIP Trunk & Dispatch Rule in LiveKit
 def register_livekit_sip_trunk_and_dispatch(extension: str):
     try:
+        key, secret = load_keys()
+        env = os.environ.copy()
+        env["LIVEKIT_URL"] = "http://127.0.0.1:7800"
+        env["LIVEKIT_API_KEY"] = key
+        env["LIVEKIT_API_SECRET"] = secret
+
         # 1. Create Inbound Trunk JSON
         trunk_data = {
             "trunk": {
@@ -90,7 +96,7 @@ def register_livekit_sip_trunk_and_dispatch(extension: str):
             temp_trunk_path = f.name
         
         # Execute trunk creation via lk CLI
-        res = subprocess.run(["lk", "sip", "inbound", "create", temp_trunk_path], capture_output=True, text=True, check=True)
+        res = subprocess.run(["lk", "sip", "inbound", "create", temp_trunk_path], env=env, capture_output=True, text=True, check=True)
         trunk_id = None
         for line in res.stdout.splitlines():
             if "SIPTrunkID:" in line or "SipTrunkID" in line:
@@ -101,30 +107,20 @@ def register_livekit_sip_trunk_and_dispatch(extension: str):
             logger.error(f"Failed to extract Inbound SIP Trunk ID for extension {extension}")
             return None, None
             
-        # 2. Create Inbound Dispatch Rule JSON passing 'extension' as a participant attribute
-        dispatch_data = {
-            "name": f"Route-{extension}",
-            "rule": {
-                "dispatchRuleDirect": {
-                    "roomName": "sip_room"
-                }
-            },
-            "trunkIds": [trunk_id],
-            "attributes": {
-                "extension": extension
-            }
-        }
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump(dispatch_data, f)
-            temp_dispatch_path = f.name
-            
-        res = subprocess.run(["lk", "sip", "dispatch", "create", temp_dispatch_path], capture_output=True, text=True, check=True)
+        # 2. Create Inbound Dispatch Rule via robust CLI options
+        res = subprocess.run([
+            "lk", "sip", "dispatch", "create",
+            "--name", f"Route-{extension}",
+            "--trunks", trunk_id,
+            "--individual", "sip_room",
+            "--randomize"
+        ], env=env, capture_output=True, text=True, check=True)
+        
         dispatch_id = None
         for line in res.stdout.splitlines():
             if "SIPDispatchRuleID:" in line or "SipDispatchRuleID" in line:
                 dispatch_id = line.split(":")[-1].strip()
                 
-        os.unlink(temp_dispatch_path)
         logger.info(f"Successfully configured dynamic SIP mapping: extension={extension}, trunk={trunk_id}, rule={dispatch_id}")
         return trunk_id, dispatch_id
     except Exception as e:
@@ -134,24 +130,30 @@ def register_livekit_sip_trunk_and_dispatch(extension: str):
 # Helper to automatically clean up Inbound SIP Trunk & Dispatch Rule
 def cleanup_livekit_sip_trunk_and_dispatch(extension: str):
     try:
+        key, secret = load_keys()
+        env = os.environ.copy()
+        env["LIVEKIT_URL"] = "http://127.0.0.1:7800"
+        env["LIVEKIT_API_KEY"] = key
+        env["LIVEKIT_API_SECRET"] = secret
+
         # Delete dispatch rule by matching name Route-{extension}
-        res = subprocess.run(["lk", "sip", "dispatch", "list"], capture_output=True, text=True)
+        res = subprocess.run(["lk", "sip", "dispatch", "list"], env=env, capture_output=True, text=True)
         for line in res.stdout.splitlines():
             if f"Route-{extension}" in line:
                 parts = line.split()
                 for part in parts:
                     if part.startswith("SDR_"):
-                        subprocess.run(["lk", "sip", "dispatch", "delete", part])
+                        subprocess.run(["lk", "sip", "dispatch", "delete", part], env=env)
                         logger.info(f"Deleted SIP dispatch rule: {part}")
                         
         # Delete inbound trunk by matching name Trunk-{extension}
-        res = subprocess.run(["lk", "sip", "inbound", "list"], capture_output=True, text=True)
+        res = subprocess.run(["lk", "sip", "inbound", "list"], env=env, capture_output=True, text=True)
         for line in res.stdout.splitlines():
             if f"Trunk-{extension}" in line:
                 parts = line.split()
                 for part in parts:
                     if part.startswith("ST_"):
-                        subprocess.run(["lk", "sip", "inbound", "delete", part])
+                        subprocess.run(["lk", "sip", "inbound", "delete", part], env=env)
                         logger.info(f"Deleted SIP inbound trunk: {part}")
     except Exception as e:
         logger.error(f"Failed to clean up SIP dialplan for extension {extension}: {e}")
