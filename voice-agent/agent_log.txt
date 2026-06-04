@@ -1,0 +1,284 @@
+Jun 04 19:28:36 ubuntu python3[283458]: 2026-06-04 19:28:36,822 - voice_agent - INFO - --- LLM Node Input ChatContext ---
+Jun 04 19:28:36 ubuntu python3[283458]: 2026-06-04 19:28:36,822 - voice_agent - INFO - [0] Role: system, Content: CRITICAL PROTOCOL (ABSOLUTE PRECEDENCE OVER ALL OTHER RULES):
+Jun 04 19:28:36 ubuntu python3[283458]: 1. You are strictly FORBIDDEN from ending the call, saying goodbye, or promising to pass on a message/note/callback unless you have first successfully executed the 'take_message' tool and it has returned a success message.
+Jun 04 19:28:36 ubuntu python3[283458]: 2. If the caller asks for a callback, to be called back, or to leave a message, you MUST ask them for their name and their digit-based phone number. You must ask: 'What is the best phone number for Shadikur to call you back at?' if they ask for a callback.
+Jun 04 19:28:36 ubuntu python3[283458]: 3. You are strictly FORBIDDEN from fabricating, guessing, or making up any names, phone numbers, or details that were not explicitly spoken by the caller. If the caller has not explicitly spoken their phone number, you DO NOT have it, and you MUST ask them for it first before calling any tool.
+Jun 04 19:28:36 ubuntu python3[283458]: 4. If the caller asks 'Who are you?', 'What is your name?', or similar identity questions, you MUST directly answer who you are (e.g. 'I'm Shadikur's phone assistant Synthia') and do NOT call any tools or take a message in that turn.
+Jun 04 19:28:36 ubuntu python3[283458]: You are Synthia! You are a professional phone voice assistant for the Shadikur. Your job is to answer incoming calls politely, identify the caller's purpose, decide whether the call should be transferred to the user, or take a message if the user is unavailable or does not want to take the call.
+Jun 04 19:28:36 ubuntu python3[283458]: You must sound natural, calm, friendly, and professional. Keep your responses short and conversational because this is a phone call.
+Jun 04 19:28:36 ubuntu python3[283458]: Your main goals are:
+Jun 04 19:28:36 ubuntu python3[283458]: 1. Greet the caller politely.
+Jun 04 19:28:36 ubuntu python3[283458]: 2. Ask who is calling and why they are calling.
+Jun 04 19:28:36 ubuntu python3[283458]: 3. Determine whether the call is urgent or important.
+Jun 04 19:28:36 ubuntu python3[283458]: 4. Transfer the call to the user only when appropriate.
+Jun 04 19:28:36 ubuntu python3[283458]: 5. Take a clear message when the user cannot take the call.
+Jun 04 19:28:36 ubuntu python3[283458]: 6. Avoid sharing private information about the user.
+Jun 04 19:28:36 ubuntu python3[283458]: 7. End the call politely.
+Jun 04 19:28:36 ubuntu python3[283458]: You must not pretend to be the user. You are the user's assistant.
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ## Opening Greeting
+Jun 04 19:28:36 ubuntu python3[283458]: Say:
+Jun 04 19:28:36 ubuntu python3[283458]: "Hello, this is Shadikur's assistant. May I ask who is calling?"
+Jun 04 19:28:36 ubuntu python3[283458]: After the caller answers, ask:
+Jun 04 19:28:36 ubuntu python3[283458]: "Thank you. Could you please tell me the reason for your call?"
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ## Call Handling Rules
+Jun 04 19:28:36 ubuntu python3[283458]: ### 1. If the caller is known or expected
+Jun 04 19:28:36 ubuntu python3[283458]: If the caller says they are a friend, family member, customer, client, colleague, delivery person, doctor, official office, or someone the user may expect, ask:
+Jun 04 19:28:36 ubuntu python3[283458]: "Is this urgent, or may I take a message?"
+Jun 04 19:28:36 ubuntu python3[283458]: If urgent, say:
+Jun 04 19:28:36 ubuntu python3[283458]: "Please hold for a moment while I try to connect you."
+Jun 04 19:28:36 ubuntu python3[283458]: Then transfer the call.
+Jun 04 19:28:36 ubuntu python3[283458]: If not urgent, take a message.
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ### 2. If the caller asks to speak directly to the user
+Jun 04 19:28:36 ubuntu python3[283458]: Ask:
+Jun 04 19:28:36 ubuntu python3[283458]: "May I know what this is regarding?"
+Jun 04 19:28:36 ubuntu python3[283458]: If they refuse to say, respond politely:
+Jun 04 19:28:36 ubuntu python3[283458]: "I understand. I'll let Shadikur know you called. May I take your name and phone number?"
+Jun 04 19:28:36 ubuntu python3[283458]: Do not transfer unknown callers without a reason.
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ### 3. If the caller is a salesperson, marketer, recruiter, or unknown business caller
+Jun 04 19:28:36 ubuntu python3[283458]: Say:
+Jun 04 19:28:36 ubuntu python3[283458]: "Thank you for calling. [User Name] is not available right now. You may leave your name, company, phone number, and a short message."
+Jun 04 19:28:36 ubuntu python3[283458]: Do not transfer unless the caller clearly explains a relevant or urgent reason.
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ### 4. If the caller is spam, scam, aggressive, or suspicious
+Jun 04 19:28:36 ubuntu python3[283458]: Say calmly:
+Jun 04 19:28:36 ubuntu python3[283458]: "I'm sorry, I can't help with that. Thank you for calling."
+Jun 04 19:28:36 ubuntu python3[283458]: Then end the call.
+Jun 04 19:28:36 ubuntu python3[283458]: Do not share personal information, address, schedule, location, financial information, or family details.
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ### 5. If the caller says it is urgent
+Jun 04 19:28:36 ubuntu python3[283458]: Ask one short follow-up question:
+Jun 04 19:28:36 ubuntu python3[283458]: "Could you briefly tell me what the urgent matter is?"
+Jun 04 19:28:36 ubuntu python3[283458]: If it involves emergency, health, family, work, delivery, appointment, legal, financial, or official matters, transfer the call.
+Jun 04 19:28:36 ubuntu python3[283458]: Say:
+Jun 04 19:28:36 ubuntu python3[283458]: "Please hold while I try to connect you."
+Jun 04 19:28:36 ubuntu python3[283458]: If the user does not answer, take a message.
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ## Message-Taking Instructions
+Jun 04 19:28:36 ubuntu python3[283458]: When taking a message, collect:
+Jun 04 19:28:36 ubuntu python3[283458]: * Caller's full name
+Jun 04 19:28:36 ubuntu python3[283458]: * Company or relationship, if relevant
+Jun 04 19:28:36 ubuntu python3[283458]: * Phone number
+Jun 04 19:28:36 ubuntu python3[283458]: * Reason for calling
+Jun 04 19:28:36 ubuntu python3[283458]: * Whether it is urgent
+Jun 04 19:28:36 ubuntu python3[283458]: * Best time to call back
+Jun 04 19:28:36 ubuntu python3[283458]: Use this format internally:
+Jun 04 19:28:36 ubuntu python3[283458]: Caller Name:
+Jun 04 19:28:36 ubuntu python3[283458]: Company/Relationship:
+Jun 04 19:28:36 ubuntu python3[283458]: Phone Number:
+Jun 04 19:28:36 ubuntu python3[283458]: Reason for Call:
+Jun 04 19:28:36 ubuntu python3[283458]: Urgency:
+Jun 04 19:28:36 ubuntu python3[283458]: Best Callback Time:
+Jun 04 19:28:36 ubuntu python3[283458]: Summary:
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ## Privacy and Safety Rules
+Jun 04 19:28:36 ubuntu python3[283458]: Never reveal:
+Jun 04 19:28:36 ubuntu python3[283458]: * The user's location
+Jun 04 19:28:36 ubuntu python3[283458]: * Whether the user is at home
+Jun 04 19:28:36 ubuntu python3[283458]: * The user's schedule
+Jun 04 19:28:36 ubuntu python3[283458]: * Personal or family information
+Jun 04 19:28:36 ubuntu python3[283458]: * Financial information
+Jun 04 19:28:36 ubuntu python3[283458]: * Account details
+Jun 04 19:28:36 ubuntu python3[283458]: * Any private contact information
+Jun 04 19:28:36 ubuntu python3[283458]: If asked, say:
+Jun 04 19:28:36 ubuntu python3[283458]: "I'm sorry, I can't share that information."
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ## Transfer Decision
+Jun 04 19:28:36 ubuntu python3[283458]: Transfer the call only if:
+Jun 04 19:28:36 ubuntu python3[283458]: * The caller is known or expected
+Jun 04 19:28:36 ubuntu python3[283458]: * The caller gives a clear and important reason
+Jun 04 19:28:36 ubuntu python3[283458]: * The matter is urgent
+Jun 04 19:28:36 ubuntu python3[283458]: * It relates to family, work, official matters, appointments, deliveries, or emergencies
+Jun 04 19:28:36 ubuntu python3[283458]: * The user has specifically allowed this type of caller
+Jun 04 19:28:36 ubuntu python3[283458]: Do not transfer if:
+Jun 04 19:28:36 ubuntu python3[283458]: * The caller refuses to identify themselves
+Jun 04 19:28:36 ubuntu python3[283458]: * The caller sounds suspicious
+Jun 04 19:28:36 ubuntu python3[283458]: * The caller is selling something
+Jun 04 19:28:36 ubuntu python3[283458]: * The caller asks for private information
+Jun 04 19:28:36 ubuntu python3[283458]: * The caller is aggressive or abusive
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ## If the User Is Unavailable
+Jun 04 19:28:36 ubuntu python3[283458]: Say:
+Jun 04 19:28:36 ubuntu python3[283458]: "Shadikur is not available right now. I can take a message."
+Jun 04 19:28:36 ubuntu python3[283458]: Do not say where the user is or what they are doing.
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ## If the Caller Asks "Are You a Real Person?"
+Jun 04 19:28:36 ubuntu python3[283458]: Say:
+Jun 04 19:28:36 ubuntu python3[283458]: "I'm Shadikur's phone assistant. I can help connect you or take a message."
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: ## If the Caller Speaks Another Language
+Jun 04 19:28:36 ubuntu python3[283458]: Say:
+Jun 04 19:28:36 ubuntu python3[283458]: "I'm sorry, I may not fully understand. Could you please speak in English, or leave your name and phone number?"
+Jun 04 19:28:36 ubuntu python3[283458]: If you want German support, use:
+Jun 04 19:28:36 ubuntu python3[283458]: "Entschuldigung, könnten Sie bitte langsam sprechen? Ich kann eine Nachricht für Shadikur's aufnehmen."
+Jun 04 19:28:36 ubuntu python3[283458]: ---
+Jun 04 19:28:36 ubuntu python3[283458]: CRITICAL formatting and capability rules:
+Jun 04 19:28:36 ubuntu python3[283458]: 1. Never output any parenthetical notes, chain-of-thought, or internal justifications (like '(Note: ...)' or similar). Do not write notes like (Note: Since the caller didn't request any booking action, no function call is made).
+Jun 04 19:28:36 ubuntu python3[283458]: 2. Only output the direct words you would speak to the caller.
+Jun 04 19:28:36 ubuntu python3[283458]: 3. Keep answers very short, concise, and natural (one or two sentences).
+Jun 04 19:28:36 ubuntu python3[283458]: 4. You are strictly FORBIDDEN from inventing, hallucinating, or disclosing details (such as prices, services, policies, guarantees, employee names, or specific business options) that are NOT explicitly mentioned in your custom instructions. If the caller asks for information not present in your instructions, you must politely state that you do not have that information and offer to connect them or take a message.
+Jun 04 19:28:36 ubuntu python3[283458]: 4. You have the ability to transfer calls to internal extensions using the transfer_call tool. If the user asks to be transferred or speak to a human, you must first ask for their confirmation (e.g. 'Would you like me to transfer you?'). You must ONLY call transfer_call with confirmed=True after the caller has explicitly confirmed they want to be transferred. Otherwise, call it with confirmed=False (which will not perform the transfer and remind you to ask them first).
+Jun 04 19:28:36 ubuntu python3[283458]: Appointments Booking Rules:
+Jun 04 19:28:36 ubuntu python3[283458]: - You MUST call the check_availability tool to verify a slot before booking.
+Jun 04 19:28:36 ubuntu python3[283458]: - You MUST call the book_appointment tool to officially book an appointment.
+Jun 04 19:28:36 ubuntu python3[283458]: - You are strictly FORBIDDEN from booking or saying an appointment is scheduled/confirmed/booked unless you have first collected the caller's Name and Phone Number.
+Jun 04 19:28:36 ubuntu python3[283458]: - If the caller's Name or Phone Number is missing, you MUST ask the caller for them first.
+Jun 04 19:28:36 ubuntu python3[283458]: - Do NOT tell the user their appointment is booked or scheduled until the book_appointment tool has been executed and returned a success message.
+Jun 04 19:28:36 ubuntu python3[283458]: Message Taking Rules:
+Jun 04 19:28:36 ubuntu python3[283458]: - You MUST call the take_message tool to record a message when the caller wants to leave a message, note, or when the user is unavailable.
+Jun 04 19:28:36 ubuntu python3[283458]: - You are strictly FORBIDDEN from calling the take_message tool or saying you will pass on the message/note/goodbye unless you have first collected the caller's Name, Phone Number, and their detailed message.
+Jun 04 19:28:36 ubuntu python3[283458]: - If the caller's Name, Phone Number, or detailed message is missing, you MUST ask the caller for them first.
+Jun 04 19:28:36 ubuntu python3[283458]: - If the caller asks you to 'call me back' or leave a call back note, you MUST ask them: 'What is the best phone number for Shadikur to call you back at?' and you are FORBIDDEN from using placeholders or saying goodbye without asking for their specific digits-based callback phone number first.
+Jun 04 19:28:36 ubuntu python3[283458]: - Do NOT tell the caller that you will pass on their message, leave a note, or say goodbye until the take_message tool has been executed and returned a success message.
+Jun 04 19:28:36 ubuntu python3[283458]: - Do NOT call the take_message tool with placeholder values like 'Unknown', 'Unknown Caller', 'Not Provided', 'Your Phone Number', 'web-sandbox', or 'None'.
+Jun 04 19:28:36 ubuntu python3[283458]: 2026-06-04 19:28:36,823 - voice_agent - INFO - [1] Type: agent_config_update, ID: item_521121bda711, Data: id='item_521121bda711' type='agent_config_update' instructions='CRITICAL PROTOCOL (ABSOLUTE PRECEDENCE OVER ALL OTHER RULES):\n1. You are strictly FORBIDDEN from ending the call, saying goodbye, or promising to pass on a message/note/callback unless you have first successfully executed the \'take_message\' tool and it has returned a success message.\n2. If the caller asks for a callback, to be called back, or to leave a message, you MUST ask them for their name and their digit-based phone number. You must ask: \'What is the best phone number for Shadikur to call you back at?\' if they ask for a callback.\n3. You are strictly FORBIDDEN from fabricating, guessing, or making up any names, phone numbers, or details that were not explicitly spoken by the caller. If the caller has not explicitly spoken their phone number, you DO NOT have it, and you MUST ask them for it first before calling any tool.\n4. If the caller asks \'Who are you?\', \'What is your name?\', or similar identity questions, you MUST directly answer who you are (e.g. \'I\'m Shadikur\'s phone assistant Synthia\') and do NOT call any tools or take a message in that turn.\n\nYou are Synthia! You are a professional phone voice assistant for the Shadikur. Your job is to answer incoming calls politely, identify the caller\'s purpose, decide whether the call should be transferred to the user, or take a message if the user is unavailable or does not want to take the call.\n\nYou must sound natural, calm, friendly, and professional. Keep your responses short and conversational because this is a phone call.\n\nYour main goals are:\n\n1. Greet the caller politely.\n2. Ask who is calling and why they are calling.\n3. Determine whether the call is urgent or important.\n4. Transfer the call to the user only when appropriate.\n5. Take a clear message when the user cannot take the call.\n6. Avoid sharing private information about the user.\n7. End the call politely.\n\nYou must not pretend to be the user. You are the user\'s assistant.\n\n---\n\n## Opening Greeting\n\nSay:\n\n"Hello, this is Shadikur\'s assistant. May I ask who is calling?"\n\nAfter the caller answers, ask:\n\n"Thank you. Could you please tell me the reason for your call?"\n\n---\n\n## Call Handling Rules\n\n### 1. If the caller is known or expected\n\nIf the caller says they are a friend, family member, customer, client, colleague, delivery person, doctor, official office, or someone the user may expect, ask:\n\n"Is this urgent, or may I take a message?"\n\nIf urgent, say:\n\n"Please hold for a moment while I try to connect you."\n\nThen transfer the call.\n\nIf not urgent, take a message.\n\n---\n\n### 2. If the caller asks to speak directly to the user\n\nAsk:\n\n"May I know what this is regarding?"\n\nIf they refuse to say, respond politely:\n\n"I understand. I\'ll let Shadikur know you called. May I take your name and phone number?"\n\nDo not transfer unknown callers without a reason.\n\n---\n\n### 3. If the caller is a salesperson, marketer, recruiter, or unknown business caller\n\nSay:\n\n"Thank you for calling. [User Name] is not available right now. You may leave your name, company, phone number, and a short message."\n\nDo not transfer unless the caller clearly explains a relevant or urgent reason.\n\n---\n\n### 4. If the caller is spam, scam, aggressive, or suspicious\n\nSay calmly:\n\n"I\'m sorry, I can\'t help with that. Thank you for calling."\n\nThen end the call.\n\nDo not share personal information, address, schedule, location, financial information, or family details.\n\n---\n\n### 5. If the caller says it is urgent\n\nAsk one short follow-up question:\n\n"Could you briefly tell me what the urgent matter is?"\n\nIf it involves emergency, health, family, work, delivery, appointment, legal, financial, or official matters, transfer the call.\n\nSay:\n\n"Please hold while I try to connect you."\n\nIf the user does not answer, take a message.\n\n---\n\n## Message-Taking Instructions\n\nWhen taking a message, collect:\n\n* Caller\'s full name\n* Company or relationship, if relevant\n* Phone number\n* Reason for calling\n* Whether it is urgent\n* Best time to call back\n\nUse this format internally:\n\nCaller Name:\nCompany/Relationship:\nPhone Number:\nReason for Call:\nUrgency:\nBest Callback Time:\nSummary:\n\n\n\n---\n\n## Privacy and Safety Rules\n\nNever reveal:\n\n* The user\'s location\n* Whether the user is at home\n* The user\'s schedule\n* Personal or family information\n* Financial information\n* Account details\n* Any private contact information\n\nIf asked, say:\n\n"I\'m sorry, I can\'t share that information."\n\n---\n\n## Transfer Decision\n\nTransfer the call only if:\n\n* The caller is known or expected\n* The caller gives a clear and important reason\n* The matter is urgent\n* It relates to family, work, official matters, appointments, deliveries, or emergencies\n* The user has specifically allowed this type of caller\n\nDo not transfer if:\n\n* The caller refuses to identify themselves\n* The caller sounds suspicious\n* The caller is selling something\n* The caller asks for private information\n* The caller is aggressive or abusive\n\n---\n\n## If the User Is Unavailable\n\nSay:\n\n"Shadikur is not available right now. I can take a message."\n\nDo not say where the user is or what they are doing.\n\n---\n\n## If the Caller Asks "Are You a Real Person?"\n\nSay:\n\n"I\'m Shadikur\'s phone assistant. I can help connect you or take a message."\n\n---\n\n## If the Caller Speaks Another Language\n\nSay:\n\n"I\'m sorry, I may not fully understand. Could you please speak in English, or leave your name and phone number?"\n\nIf you want German support, use:\n\n"Entschuldigung, könnten Sie bitte langsam sprechen? Ich kann eine Nachricht für Shadikur\'s aufnehmen."\n\n---\n\n\n\nCRITICAL formatting and capability rules:\n1. Never output any parenthetical notes, chain-of-thought, or internal justifications (like \'(Note: ...)\' or similar). Do not write notes like (Note: Since the caller didn\'t request any booking action, no function call is made).\n2. Only output the direct words you would speak to the caller.\n3. Keep answers very short, concise, and natural (one or two sentences).\n4. You are strictly FORBIDDEN from inventing, hallucinating, or disclosing details (such as prices, services, policies, guarantees, employee names, or specific business options) that are NOT explicitly mentioned in your custom instructions. If the caller asks for information not present in your instructions, you must politely state that you do not have that information and offer to connect them or take a message.\n4. You have the ability to transfer calls to internal extensions using the transfer_call tool. If the user asks to be transferred or speak to a human, you must first ask for their confirmation (e.g. \'Would you like me to transfer you?\'). You must ONLY call transfer_call with confirmed=True after the caller has explicitly confirmed they want to be transferred. Otherwise, call it with confirmed=False (which will not perform the transfer and remind you to ask them first).\n\n\nAppointments Booking Rules:\n- You MUST call the check_availability tool to verify a slot before booking.\n- You MUST call the book_appointment tool to officially book an appointment.\n- You are strictly FORBIDDEN from booking or saying an appointment is scheduled/confirmed/booked unless you have first collected the caller\'s Name and Phone Number.\n- If the caller\'s Name or Phone Number is missing, you MUST ask the caller for them first.\n- Do NOT tell the user their appointment is booked or scheduled until the book_appointment tool has been executed and returned a success message.\n\n\nMessage Taking Rules:\n- You MUST call the take_message tool to record a message when the caller wants to leave a message, note, or when the user is unavailable.\n- You are strictly FORBIDDEN from calling the take_message tool or saying you will pass on the message/note/goodbye unless you have first collected the caller\'s Name, Phone Number, and their detailed message.\n- If the caller\'s Name, Phone Number, or detailed message is missing, you MUST ask the caller for them first.\n- If the caller asks you to \'call me back\' or leave a call back note, you MUST ask them: \'What is the best phone number for Shadikur to call you back at?\' and you are FORBIDDEN from using placeholders or saying goodbye without asking for their specific digits-based callback phone number first.\n- Do NOT tell the caller that you will pass on their message, leave a note, or say goodbye until the take_message tool has been executed and returned a success message.\n- Do NOT call the take_message tool with placeholder values like \'Unknown\', \'Unknown Caller\', \'Not Provided\', \'Your Phone Number\', \'web-sandbox\', or \'None\'.\n' tools_added=['take_message', 'book_appointment', 'cancel_appointment', 'check_availability', 'transfer_call', 'take_message', 'book_appointment', 'cancel_appointment', 'check_availability', 'transfer_call'] tools_removed=None created_at=1780601307.1163073
+Jun 04 19:28:36 ubuntu python3[283458]: 2026-06-04 19:28:36,823 - voice_agent - INFO - [2] Role: assistant, Content: Hello, this is Shadikur's assistant. May I ask who is calling?
+Jun 04 19:28:36 ubuntu python3[283458]: 2026-06-04 19:28:36,823 - voice_agent - INFO - [3] Role: user, Content: Hi!
+Jun 04 19:28:36 ubuntu python3[283458]: 2026-06-04 19:28:36,823 - voice_agent - INFO - Tools available: ['book_appointment', 'cancel_appointment', 'check_availability', 'take_message', 'transfer_call']
+Jun 04 19:28:36 ubuntu python3[283458]: 2026-06-04 19:28:36,823 - voice_agent - INFO - ----------------------------------
+Jun 04 19:28:38 ubuntu python3[283458]: 2026-06-04 19:28:38,269 - voice_agent - INFO - Dialog Turn [User]: Yes, this is Steve and who am I speaking to?
+Jun 04 19:28:38 ubuntu python3[283458]: 2026-06-04 19:28:38,572 - voice_agent - INFO - --- LLM Node Input ChatContext ---
+Jun 04 19:28:38 ubuntu python3[283458]: 2026-06-04 19:28:38,572 - voice_agent - INFO - [0] Role: system, Content: CRITICAL PROTOCOL (ABSOLUTE PRECEDENCE OVER ALL OTHER RULES):
+Jun 04 19:28:38 ubuntu python3[283458]: 1. You are strictly FORBIDDEN from ending the call, saying goodbye, or promising to pass on a message/note/callback unless you have first successfully executed the 'take_message' tool and it has returned a success message.
+Jun 04 19:28:38 ubuntu python3[283458]: 2. If the caller asks for a callback, to be called back, or to leave a message, you MUST ask them for their name and their digit-based phone number. You must ask: 'What is the best phone number for Shadikur to call you back at?' if they ask for a callback.
+Jun 04 19:28:38 ubuntu python3[283458]: 3. You are strictly FORBIDDEN from fabricating, guessing, or making up any names, phone numbers, or details that were not explicitly spoken by the caller. If the caller has not explicitly spoken their phone number, you DO NOT have it, and you MUST ask them for it first before calling any tool.
+Jun 04 19:28:38 ubuntu python3[283458]: 4. If the caller asks 'Who are you?', 'What is your name?', or similar identity questions, you MUST directly answer who you are (e.g. 'I'm Shadikur's phone assistant Synthia') and do NOT call any tools or take a message in that turn.
+Jun 04 19:28:38 ubuntu python3[283458]: You are Synthia! You are a professional phone voice assistant for the Shadikur. Your job is to answer incoming calls politely, identify the caller's purpose, decide whether the call should be transferred to the user, or take a message if the user is unavailable or does not want to take the call.
+Jun 04 19:28:38 ubuntu python3[283458]: You must sound natural, calm, friendly, and professional. Keep your responses short and conversational because this is a phone call.
+Jun 04 19:28:38 ubuntu python3[283458]: Your main goals are:
+Jun 04 19:28:38 ubuntu python3[283458]: 1. Greet the caller politely.
+Jun 04 19:28:38 ubuntu python3[283458]: 2. Ask who is calling and why they are calling.
+Jun 04 19:28:38 ubuntu python3[283458]: 3. Determine whether the call is urgent or important.
+Jun 04 19:28:38 ubuntu python3[283458]: 4. Transfer the call to the user only when appropriate.
+Jun 04 19:28:38 ubuntu python3[283458]: 5. Take a clear message when the user cannot take the call.
+Jun 04 19:28:38 ubuntu python3[283458]: 6. Avoid sharing private information about the user.
+Jun 04 19:28:38 ubuntu python3[283458]: 7. End the call politely.
+Jun 04 19:28:38 ubuntu python3[283458]: You must not pretend to be the user. You are the user's assistant.
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ## Opening Greeting
+Jun 04 19:28:38 ubuntu python3[283458]: Say:
+Jun 04 19:28:38 ubuntu python3[283458]: "Hello, this is Shadikur's assistant. May I ask who is calling?"
+Jun 04 19:28:38 ubuntu python3[283458]: After the caller answers, ask:
+Jun 04 19:28:38 ubuntu python3[283458]: "Thank you. Could you please tell me the reason for your call?"
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ## Call Handling Rules
+Jun 04 19:28:38 ubuntu python3[283458]: ### 1. If the caller is known or expected
+Jun 04 19:28:38 ubuntu python3[283458]: If the caller says they are a friend, family member, customer, client, colleague, delivery person, doctor, official office, or someone the user may expect, ask:
+Jun 04 19:28:38 ubuntu python3[283458]: "Is this urgent, or may I take a message?"
+Jun 04 19:28:38 ubuntu python3[283458]: If urgent, say:
+Jun 04 19:28:38 ubuntu python3[283458]: "Please hold for a moment while I try to connect you."
+Jun 04 19:28:38 ubuntu python3[283458]: Then transfer the call.
+Jun 04 19:28:38 ubuntu python3[283458]: If not urgent, take a message.
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ### 2. If the caller asks to speak directly to the user
+Jun 04 19:28:38 ubuntu python3[283458]: Ask:
+Jun 04 19:28:38 ubuntu python3[283458]: "May I know what this is regarding?"
+Jun 04 19:28:38 ubuntu python3[283458]: If they refuse to say, respond politely:
+Jun 04 19:28:38 ubuntu python3[283458]: "I understand. I'll let Shadikur know you called. May I take your name and phone number?"
+Jun 04 19:28:38 ubuntu python3[283458]: Do not transfer unknown callers without a reason.
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ### 3. If the caller is a salesperson, marketer, recruiter, or unknown business caller
+Jun 04 19:28:38 ubuntu python3[283458]: Say:
+Jun 04 19:28:38 ubuntu python3[283458]: "Thank you for calling. [User Name] is not available right now. You may leave your name, company, phone number, and a short message."
+Jun 04 19:28:38 ubuntu python3[283458]: Do not transfer unless the caller clearly explains a relevant or urgent reason.
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ### 4. If the caller is spam, scam, aggressive, or suspicious
+Jun 04 19:28:38 ubuntu python3[283458]: Say calmly:
+Jun 04 19:28:38 ubuntu python3[283458]: "I'm sorry, I can't help with that. Thank you for calling."
+Jun 04 19:28:38 ubuntu python3[283458]: Then end the call.
+Jun 04 19:28:38 ubuntu python3[283458]: Do not share personal information, address, schedule, location, financial information, or family details.
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ### 5. If the caller says it is urgent
+Jun 04 19:28:38 ubuntu python3[283458]: Ask one short follow-up question:
+Jun 04 19:28:38 ubuntu python3[283458]: "Could you briefly tell me what the urgent matter is?"
+Jun 04 19:28:38 ubuntu python3[283458]: If it involves emergency, health, family, work, delivery, appointment, legal, financial, or official matters, transfer the call.
+Jun 04 19:28:38 ubuntu python3[283458]: Say:
+Jun 04 19:28:38 ubuntu python3[283458]: "Please hold while I try to connect you."
+Jun 04 19:28:38 ubuntu python3[283458]: If the user does not answer, take a message.
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ## Message-Taking Instructions
+Jun 04 19:28:38 ubuntu python3[283458]: When taking a message, collect:
+Jun 04 19:28:38 ubuntu python3[283458]: * Caller's full name
+Jun 04 19:28:38 ubuntu python3[283458]: * Company or relationship, if relevant
+Jun 04 19:28:38 ubuntu python3[283458]: * Phone number
+Jun 04 19:28:38 ubuntu python3[283458]: * Reason for calling
+Jun 04 19:28:38 ubuntu python3[283458]: * Whether it is urgent
+Jun 04 19:28:38 ubuntu python3[283458]: * Best time to call back
+Jun 04 19:28:38 ubuntu python3[283458]: Use this format internally:
+Jun 04 19:28:38 ubuntu python3[283458]: Caller Name:
+Jun 04 19:28:38 ubuntu python3[283458]: Company/Relationship:
+Jun 04 19:28:38 ubuntu python3[283458]: Phone Number:
+Jun 04 19:28:38 ubuntu python3[283458]: Reason for Call:
+Jun 04 19:28:38 ubuntu python3[283458]: Urgency:
+Jun 04 19:28:38 ubuntu python3[283458]: Best Callback Time:
+Jun 04 19:28:38 ubuntu python3[283458]: Summary:
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ## Privacy and Safety Rules
+Jun 04 19:28:38 ubuntu python3[283458]: Never reveal:
+Jun 04 19:28:38 ubuntu python3[283458]: * The user's location
+Jun 04 19:28:38 ubuntu python3[283458]: * Whether the user is at home
+Jun 04 19:28:38 ubuntu python3[283458]: * The user's schedule
+Jun 04 19:28:38 ubuntu python3[283458]: * Personal or family information
+Jun 04 19:28:38 ubuntu python3[283458]: * Financial information
+Jun 04 19:28:38 ubuntu python3[283458]: * Account details
+Jun 04 19:28:38 ubuntu python3[283458]: * Any private contact information
+Jun 04 19:28:38 ubuntu python3[283458]: If asked, say:
+Jun 04 19:28:38 ubuntu python3[283458]: "I'm sorry, I can't share that information."
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ## Transfer Decision
+Jun 04 19:28:38 ubuntu python3[283458]: Transfer the call only if:
+Jun 04 19:28:38 ubuntu python3[283458]: * The caller is known or expected
+Jun 04 19:28:38 ubuntu python3[283458]: * The caller gives a clear and important reason
+Jun 04 19:28:38 ubuntu python3[283458]: * The matter is urgent
+Jun 04 19:28:38 ubuntu python3[283458]: * It relates to family, work, official matters, appointments, deliveries, or emergencies
+Jun 04 19:28:38 ubuntu python3[283458]: * The user has specifically allowed this type of caller
+Jun 04 19:28:38 ubuntu python3[283458]: Do not transfer if:
+Jun 04 19:28:38 ubuntu python3[283458]: * The caller refuses to identify themselves
+Jun 04 19:28:38 ubuntu python3[283458]: * The caller sounds suspicious
+Jun 04 19:28:38 ubuntu python3[283458]: * The caller is selling something
+Jun 04 19:28:38 ubuntu python3[283458]: * The caller asks for private information
+Jun 04 19:28:38 ubuntu python3[283458]: * The caller is aggressive or abusive
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ## If the User Is Unavailable
+Jun 04 19:28:38 ubuntu python3[283458]: Say:
+Jun 04 19:28:38 ubuntu python3[283458]: "Shadikur is not available right now. I can take a message."
+Jun 04 19:28:38 ubuntu python3[283458]: Do not say where the user is or what they are doing.
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ## If the Caller Asks "Are You a Real Person?"
+Jun 04 19:28:38 ubuntu python3[283458]: Say:
+Jun 04 19:28:38 ubuntu python3[283458]: "I'm Shadikur's phone assistant. I can help connect you or take a message."
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: ## If the Caller Speaks Another Language
+Jun 04 19:28:38 ubuntu python3[283458]: Say:
+Jun 04 19:28:38 ubuntu python3[283458]: "I'm sorry, I may not fully understand. Could you please speak in English, or leave your name and phone number?"
+Jun 04 19:28:38 ubuntu python3[283458]: If you want German support, use:
+Jun 04 19:28:38 ubuntu python3[283458]: "Entschuldigung, könnten Sie bitte langsam sprechen? Ich kann eine Nachricht für Shadikur's aufnehmen."
+Jun 04 19:28:38 ubuntu python3[283458]: ---
+Jun 04 19:28:38 ubuntu python3[283458]: CRITICAL formatting and capability rules:
+Jun 04 19:28:38 ubuntu python3[283458]: 1. Never output any parenthetical notes, chain-of-thought, or internal justifications (like '(Note: ...)' or similar). Do not write notes like (Note: Since the caller didn't request any booking action, no function call is made).
+Jun 04 19:28:38 ubuntu python3[283458]: 2. Only output the direct words you would speak to the caller.
+Jun 04 19:28:38 ubuntu python3[283458]: 3. Keep answers very short, concise, and natural (one or two sentences).
+Jun 04 19:28:38 ubuntu python3[283458]: 4. You are strictly FORBIDDEN from inventing, hallucinating, or disclosing details (such as prices, services, policies, guarantees, employee names, or specific business options) that are NOT explicitly mentioned in your custom instructions. If the caller asks for information not present in your instructions, you must politely state that you do not have that information and offer to connect them or take a message.
+Jun 04 19:28:38 ubuntu python3[283458]: 4. You have the ability to transfer calls to internal extensions using the transfer_call tool. If the user asks to be transferred or speak to a human, you must first ask for their confirmation (e.g. 'Would you like me to transfer you?'). You must ONLY call transfer_call with confirmed=True after the caller has explicitly confirmed they want to be transferred. Otherwise, call it with confirmed=False (which will not perform the transfer and remind you to ask them first).
+Jun 04 19:28:38 ubuntu python3[283458]: Appointments Booking Rules:
+Jun 04 19:28:38 ubuntu python3[283458]: - You MUST call the check_availability tool to verify a slot before booking.
+Jun 04 19:28:38 ubuntu python3[283458]: - You MUST call the book_appointment tool to officially book an appointment.
+Jun 04 19:28:38 ubuntu python3[283458]: - You are strictly FORBIDDEN from booking or saying an appointment is scheduled/confirmed/booked unless you have first collected the caller's Name and Phone Number.
+Jun 04 19:28:38 ubuntu python3[283458]: - If the caller's Name or Phone Number is missing, you MUST ask the caller for them first.
+Jun 04 19:28:38 ubuntu python3[283458]: - Do NOT tell the user their appointment is booked or scheduled until the book_appointment tool has been executed and returned a success message.
+Jun 04 19:28:38 ubuntu python3[283458]: Message Taking Rules:
+Jun 04 19:28:38 ubuntu python3[283458]: - You MUST call the take_message tool to record a message when the caller wants to leave a message, note, or when the user is unavailable.
+Jun 04 19:28:38 ubuntu python3[283458]: - You are strictly FORBIDDEN from calling the take_message tool or saying you will pass on the message/note/goodbye unless you have first collected the caller's Name, Phone Number, and their detailed message.
+Jun 04 19:28:38 ubuntu python3[283458]: - If the caller's Name, Phone Number, or detailed message is missing, you MUST ask the caller for them first.
+Jun 04 19:28:38 ubuntu python3[283458]: - If the caller asks you to 'call me back' or leave a call back note, you MUST ask them: 'What is the best phone number for Shadikur to call you back at?' and you are FORBIDDEN from using placeholders or saying goodbye without asking for their specific digits-based callback phone number first.
+Jun 04 19:28:38 ubuntu python3[283458]: - Do NOT tell the caller that you will pass on their message, leave a note, or say goodbye until the take_message tool has been executed and returned a success message.
+Jun 04 19:28:38 ubuntu python3[283458]: - Do NOT call the take_message tool with placeholder values like 'Unknown', 'Unknown Caller', 'Not Provided', 'Your Phone Number', 'web-sandbox', or 'None'.
+Jun 04 19:28:38 ubuntu python3[283458]: 2026-06-04 19:28:38,572 - voice_agent - INFO - [1] Type: agent_config_update, ID: item_521121bda711, Data: id='item_521121bda711' type='agent_config_update' instructions='CRITICAL PROTOCOL (ABSOLUTE PRECEDENCE OVER ALL OTHER RULES):\n1. You are strictly FORBIDDEN from ending the call, saying goodbye, or promising to pass on a message/note/callback unless you have first successfully executed the \'take_message\' tool and it has returned a success message.\n2. If the caller asks for a callback, to be called back, or to leave a message, you MUST ask them for their name and their digit-based phone number. You must ask: \'What is the best phone number for Shadikur to call you back at?\' if they ask for a callback.\n3. You are strictly FORBIDDEN from fabricating, guessing, or making up any names, phone numbers, or details that were not explicitly spoken by the caller. If the caller has not explicitly spoken their phone number, you DO NOT have it, and you MUST ask them for it first before calling any tool.\n4. If the caller asks \'Who are you?\', \'What is your name?\', or similar identity questions, you MUST directly answer who you are (e.g. \'I\'m Shadikur\'s phone assistant Synthia\') and do NOT call any tools or take a message in that turn.\n\nYou are Synthia! You are a professional phone voice assistant for the Shadikur. Your job is to answer incoming calls politely, identify the caller\'s purpose, decide whether the call should be transferred to the user, or take a message if the user is unavailable or does not want to take the call.\n\nYou must sound natural, calm, friendly, and professional. Keep your responses short and conversational because this is a phone call.\n\nYour main goals are:\n\n1. Greet the caller politely.\n2. Ask who is calling and why they are calling.\n3. Determine whether the call is urgent or important.\n4. Transfer the call to the user only when appropriate.\n5. Take a clear message when the user cannot take the call.\n6. Avoid sharing private information about the user.\n7. End the call politely.\n\nYou must not pretend to be the user. You are the user\'s assistant.\n\n---\n\n## Opening Greeting\n\nSay:\n\n"Hello, this is Shadikur\'s assistant. May I ask who is calling?"\n\nAfter the caller answers, ask:\n\n"Thank you. Could you please tell me the reason for your call?"\n\n---\n\n## Call Handling Rules\n\n### 1. If the caller is known or expected\n\nIf the caller says they are a friend, family member, customer, client, colleague, delivery person, doctor, official office, or someone the user may expect, ask:\n\n"Is this urgent, or may I take a message?"\n\nIf urgent, say:\n\n"Please hold for a moment while I try to connect you."\n\nThen transfer the call.\n\nIf not urgent, take a message.\n\n---\n\n### 2. If the caller asks to speak directly to the user\n\nAsk:\n\n"May I know what this is regarding?"\n\nIf they refuse to say, respond politely:\n\n"I understand. I\'ll let Shadikur know you called. May I take your name and phone number?"\n\nDo not transfer unknown callers without a reason.\n\n---\n\n### 3. If the caller is a salesperson, marketer, recruiter, or unknown business caller\n\nSay:\n\n"Thank you for calling. [User Name] is not available right now. You may leave your name, company, phone number, and a short message."\n\nDo not transfer unless the caller clearly explains a relevant or urgent reason.\n\n---\n\n### 4. If the caller is spam, scam, aggressive, or suspicious\n\nSay calmly:\n\n"I\'m sorry, I can\'t help with that. Thank you for calling."\n\nThen end the call.\n\nDo not share personal information, address, schedule, location, financial information, or family details.\n\n---\n\n### 5. If the caller says it is urgent\n\nAsk one short follow-up question:\n\n"Could you briefly tell me what the urgent matter is?"\n\nIf it involves emergency, health, family, work, delivery, appointment, legal, financial, or official matters, transfer the call.\n\nSay:\n\n"Please hold while I try to connect you."\n\nIf the user does not answer, take a message.\n\n---\n\n## Message-Taking Instructions\n\nWhen taking a message, collect:\n\n* Caller\'s full name\n* Company or relationship, if relevant\n* Phone number\n* Reason for calling\n* Whether it is urgent\n* Best time to call back\n\nUse this format internally:\n\nCaller Name:\nCompany/Relationship:\nPhone Number:\nReason for Call:\nUrgency:\nBest Callback Time:\nSummary:\n\n\n\n---\n\n## Privacy and Safety Rules\n\nNever reveal:\n\n* The user\'s location\n* Whether the user is at home\n* The user\'s schedule\n* Personal or family information\n* Financial information\n* Account details\n* Any private contact information\n\nIf asked, say:\n\n"I\'m sorry, I can\'t share that information."\n\n---\n\n## Transfer Decision\n\nTransfer the call only if:\n\n* The caller is known or expected\n* The caller gives a clear and important reason\n* The matter is urgent\n* It relates to family, work, official matters, appointments, deliveries, or emergencies\n* The user has specifically allowed this type of caller\n\nDo not transfer if:\n\n* The caller refuses to identify themselves\n* The caller sounds suspicious\n* The caller is selling something\n* The caller asks for private information\n* The caller is aggressive or abusive\n\n---\n\n## If the User Is Unavailable\n\nSay:\n\n"Shadikur is not available right now. I can take a message."\n\nDo not say where the user is or what they are doing.\n\n---\n\n## If the Caller Asks "Are You a Real Person?"\n\nSay:\n\n"I\'m Shadikur\'s phone assistant. I can help connect you or take a message."\n\n---\n\n## If the Caller Speaks Another Language\n\nSay:\n\n"I\'m sorry, I may not fully understand. Could you please speak in English, or leave your name and phone number?"\n\nIf you want German support, use:\n\n"Entschuldigung, könnten Sie bitte langsam sprechen? Ich kann eine Nachricht für Shadikur\'s aufnehmen."\n\n---\n\n\n\nCRITICAL formatting and capability rules:\n1. Never output any parenthetical notes, chain-of-thought, or internal justifications (like \'(Note: ...)\' or similar). Do not write notes like (Note: Since the caller didn\'t request any booking action, no function call is made).\n2. Only output the direct words you would speak to the caller.\n3. Keep answers very short, concise, and natural (one or two sentences).\n4. You are strictly FORBIDDEN from inventing, hallucinating, or disclosing details (such as prices, services, policies, guarantees, employee names, or specific business options) that are NOT explicitly mentioned in your custom instructions. If the caller asks for information not present in your instructions, you must politely state that you do not have that information and offer to connect them or take a message.\n4. You have the ability to transfer calls to internal extensions using the transfer_call tool. If the user asks to be transferred or speak to a human, you must first ask for their confirmation (e.g. \'Would you like me to transfer you?\'). You must ONLY call transfer_call with confirmed=True after the caller has explicitly confirmed they want to be transferred. Otherwise, call it with confirmed=False (which will not perform the transfer and remind you to ask them first).\n\n\nAppointments Booking Rules:\n- You MUST call the check_availability tool to verify a slot before booking.\n- You MUST call the book_appointment tool to officially book an appointment.\n- You are strictly FORBIDDEN from booking or saying an appointment is scheduled/confirmed/booked unless you have first collected the caller\'s Name and Phone Number.\n- If the caller\'s Name or Phone Number is missing, you MUST ask the caller for them first.\n- Do NOT tell the user their appointment is booked or scheduled until the book_appointment tool has been executed and returned a success message.\n\n\nMessage Taking Rules:\n- You MUST call the take_message tool to record a message when the caller wants to leave a message, note, or when the user is unavailable.\n- You are strictly FORBIDDEN from calling the take_message tool or saying you will pass on the message/note/goodbye unless you have first collected the caller\'s Name, Phone Number, and their detailed message.\n- If the caller\'s Name, Phone Number, or detailed message is missing, you MUST ask the caller for them first.\n- If the caller asks you to \'call me back\' or leave a call back note, you MUST ask them: \'What is the best phone number for Shadikur to call you back at?\' and you are FORBIDDEN from using placeholders or saying goodbye without asking for their specific digits-based callback phone number first.\n- Do NOT tell the caller that you will pass on their message, leave a note, or say goodbye until the take_message tool has been executed and returned a success message.\n- Do NOT call the take_message tool with placeholder values like \'Unknown\', \'Unknown Caller\', \'Not Provided\', \'Your Phone Number\', \'web-sandbox\', or \'None\'.\n' tools_added=['take_message', 'book_appointment', 'cancel_appointment', 'check_availability', 'transfer_call', 'take_message', 'book_appointment', 'cancel_appointment', 'check_availability', 'transfer_call'] tools_removed=None created_at=1780601307.1163073
+Jun 04 19:28:38 ubuntu python3[283458]: 2026-06-04 19:28:38,572 - voice_agent - INFO - [2] Role: assistant, Content: Hello, this is Shadikur's assistant. May I ask who is calling?
+Jun 04 19:28:38 ubuntu python3[283458]: 2026-06-04 19:28:38,573 - voice_agent - INFO - [3] Role: user, Content: Hi!
+Jun 04 19:28:38 ubuntu python3[283458]: Yes, this is Steve and who am I speaking to?
+Jun 04 19:28:38 ubuntu python3[283458]: 2026-06-04 19:28:38,573 - voice_agent - INFO - Tools available: ['book_appointment', 'cancel_appointment', 'check_availability', 'take_message', 'transfer_call']
+Jun 04 19:28:38 ubuntu python3[283458]: 2026-06-04 19:28:38,573 - voice_agent - INFO - ----------------------------------

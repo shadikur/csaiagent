@@ -108,6 +108,29 @@ def extract_greeting(prompt_str: str, business_name: str) -> str:
     return f"Hello! Thank you for calling {business_name}. How can I help you today?"
 
 
+def is_identity_question(text: str) -> bool:
+    text = text.lower().strip()
+    # Remove punctuation
+    for c in ",.?!;:-'\"":
+        text = text.replace(c, " ")
+    # Replace multiple spaces with single space
+    text = re.sub(r'\s+', ' ', text)
+    
+    patterns = [
+        r"\bwho\s+(are\s+you|is\s+this)\b",
+        r"\bwho\s+am\s+i\s+(speaking|talking)\s+to\b",
+        r"\bwhat\s+is\s+your\s+name\b",
+        r"\bwhat\s+s\s+your\s+name\b",
+        r"\bare\s+you\s+a\s+(real\s+person|robot|ai|bot|human)\b",
+        r"\bwho\s+are\s+you\s+representing\b",
+        r"\bidentify\s+yourself\b",
+    ]
+    for pattern in patterns:
+        if re.search(pattern, text):
+            return True
+    return False
+
+
 class FilteredAgent(Agent):
     def tts_node(self, text, model_settings):
         async def filtered_text_generator():
@@ -144,34 +167,49 @@ class FilteredAgent(Agent):
         model_settings,
     ):
         # Merge consecutive user/assistant messages to prevent Ollama from failing tool-calling
-        cleaned_ctx = llm.ChatContext()
-        last_role = None
+        cleaned_items = []
         for item in chat_ctx.items:
-            if isinstance(item, llm.ChatMessage) and item.role in ('user', 'assistant') and item.role == last_role:
-                if cleaned_ctx.items:
-                    existing_item = cleaned_ctx.items[-1]
-                    if isinstance(existing_item, llm.ChatMessage):
-                        merged_text = existing_item.text_content + '\n' + item.text_content
-                        existing_item.content = [merged_text]
-                        continue
-            if isinstance(item, llm.ChatMessage):
-                cleaned_ctx.items.append(
-                    llm.ChatMessage(
-                        role=item.role,
-                        content=list(item.content) if isinstance(item.content, list) else [item.content],
-                        id=item.id,
-                        type=item.type,
-                        interrupted=item.interrupted,
-                        transcript_confidence=item.transcript_confidence,
-                        extra=item.extra
-                    )
-                )
-                last_role = item.role
+            if (
+                cleaned_items
+                and isinstance(item, llm.ChatMessage)
+                and item.role in ("user", "assistant")
+                and isinstance(cleaned_items[-1], llm.ChatMessage)
+                and cleaned_items[-1].role == item.role
+            ):
+                prev_item = cleaned_items[-1]
+                prev_text = prev_item.text_content or ""
+                curr_text = item.text_content or ""
+                merged_text = prev_text + "\n" + curr_text
+                # Use model_copy to preserve all Pydantic fields/private attributes
+                cleaned_items[-1] = prev_item.model_copy(update={"content": [merged_text]})
             else:
-                cleaned_ctx.items.append(item)
-                last_role = getattr(item, 'role', None)
+                cleaned_items.append(item)
                 
-        return super().llm_node(cleaned_ctx, tools, model_settings)
+        cleaned_ctx = llm.ChatContext(cleaned_items)
+        
+        # Check if the last user message was an identity question
+        last_user_msg = None
+        for item in reversed(cleaned_items):
+            if isinstance(item, llm.ChatMessage) and item.role == "user":
+                last_user_msg = item.text_content
+                break
+        
+        active_tools = tools
+        if last_user_msg and is_identity_question(last_user_msg):
+            logging.info(f"Identity question detected: '{last_user_msg}'. Temporarily clearing tools to prevent hallucinated tool calls.")
+            active_tools = []
+        
+        # Log LLM inputs to debug raw JSON leaks or context issues
+        logging.info("--- LLM Node Input ChatContext ---")
+        for idx, item in enumerate(cleaned_items):
+            if isinstance(item, llm.ChatMessage):
+                logging.info(f"[{idx}] Role: {item.role}, Content: {item.text_content}")
+            else:
+                logging.info(f"[{idx}] Type: {item.type}, ID: {item.id}, Data: {item}")
+        logging.info(f"Tools available: {[t.info.name for t in active_tools]}")
+        logging.info("----------------------------------")
+        
+        return super().llm_node(cleaned_ctx, active_tools, model_settings)
 
 
 class AppointmentTools:
@@ -266,6 +304,14 @@ class AppointmentTools:
         extension = (extension or "").strip()
         if not extension:
             return "Error: Please specify the extension number to transfer to."
+        
+        # Validate that the extension is a numeric string (digits only)
+        clean_ext = re.sub(r'[^0-9]', '', extension)
+        if not clean_ext or len(clean_ext) < 2:
+            return (
+                f"Error: '{extension}' is not a valid extension. Extensions must be numeric digits (e.g., '100', '101', '502'). "
+                "You are strictly forbidden from transferring to names like 'Synthia' or 'Shadikur'. Please politely explain this to the caller."
+            )
         
         if not confirmed:
             return (
@@ -572,10 +618,36 @@ async def entrypoint(ctx: JobContext):
     if business:
         logging.info(f"Dynamically loading profile for business: {business['name']}")
         agent_name = business.get("name", "Gravity")
-        agent_prompt = business["prompt"]
+        db_prompt = business["prompt"]
         voice_model = business.get("voice", "af_bella")
         skills = business.get("skills", ["appointments"])
         business_id = business["_id"]
+        
+        # Extract starting greeting from the raw prompt first
+        greeting_text = extract_greeting(db_prompt, agent_name)
+        
+        # Clean conflicting instructions and goodbye endings from custom prompt
+        sanitized_prompt = db_prompt.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+        sanitized_prompt = re.sub(r'(?i)##\s+Ending\s+the\s+Call\b.*', '', sanitized_prompt, flags=re.DOTALL)
+        sanitized_prompt = re.sub(r'(?i)After\s+collecting\s+the\s+message,\s*say\s*:\s*\n*\s*"[^"]*"', '', sanitized_prompt)
+        sanitized_prompt = re.sub(r'(?i)After\s+collecting\s+the\s+message,\s*say\s*:\s*\n*\s*\'[^\']*\'', '', sanitized_prompt)
+        sanitized_prompt = sanitized_prompt.replace('"Thank you for calling. I\'ll pass on your message."', '')
+        sanitized_prompt = sanitized_prompt.replace('"Thank you. I\'ll pass your message to Shadikur."', '')
+        sanitized_prompt = sanitized_prompt.replace('"Thank you. Have a nice day."', '')
+        
+        # Prepend critical overriding rules
+        agent_prompt = (
+            "CRITICAL PROTOCOL (ABSOLUTE PRECEDENCE OVER ALL OTHER RULES):\n"
+            "1. You are strictly FORBIDDEN from ending the call, saying goodbye, or promising to pass on a message/note/callback "
+            "unless you have first successfully executed the 'take_message' tool and it has returned a success message.\n"
+            "2. If the caller asks for a callback, to be called back, or to leave a message, you MUST ask them for their name "
+            "and their digit-based phone number. You must ask: 'What is the best phone number for Shadikur to call you back at?' "
+            "if they ask for a callback.\n"
+            "3. You are strictly FORBIDDEN from fabricating, guessing, or making up any names, phone numbers, or details that were not explicitly spoken by the caller. "
+            "If the caller has not explicitly spoken their phone number, you DO NOT have it, and you MUST ask them for it first before calling any tool.\n"
+            "4. If the caller asks 'Who are you?', 'What is your name?', or similar identity questions, you MUST directly answer who you are (e.g. 'I'm Shadikur's phone assistant Synthia') "
+            "and do NOT call any tools or take a message in that turn.\n\n"
+        ) + sanitized_prompt
     else:
         logging.warning(f"No registered business found for extension {extension}. Falling back to default.")
         agent_name = "Gravity"
@@ -586,9 +658,7 @@ async def entrypoint(ctx: JobContext):
         voice_model = "af_bella"
         skills = ["appointments"]
         business_id = ObjectId("6659f13ba97312fba0a91e5c")
-        
-    # Multilingual customization
-    greeting_text = extract_greeting(agent_prompt, agent_name)
+        greeting_text = extract_greeting(agent_prompt, agent_name)
     voice_lower = voice_model.lower()
     if voice_lower.startswith("de") or voice_lower == "german":
         if greeting_text.startswith("Hello! Thank you for calling"):
@@ -674,7 +744,7 @@ async def entrypoint(ctx: JobContext):
                 # 100ms of silence at 16kHz
                 data = np.zeros(1600, dtype=np.int16)
                 frame = AudioFrame(data.tobytes(), 16000, 1, 1600)
-                await stt_model.transcribe(buffer=[frame])
+                await stt_model.recognize(buffer=[frame])
                 logging.info("STT warmup complete.")
             except Exception as ex:
                 logging.warning(f"STT warmup failed: {ex}")
@@ -686,6 +756,7 @@ async def entrypoint(ctx: JobContext):
         model="llama3.1:8b-instruct-q4_K_M",
         api_key="local",
         temperature=0.1,
+        _strict_tool_schema=False,
         extra_body={
             "options": {
                 "num_ctx": 2048,
