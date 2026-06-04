@@ -43,7 +43,7 @@ services:
 
   stt:
     environment:
-    - WHISPER_MODEL=base.en
+    - WHISPER_MODEL=small
     image: fedirz/faster-whisper-server:latest-cuda  # Fixed explicit CUDA image tag
     ports:
     - 127.0.0.1:8000:8000

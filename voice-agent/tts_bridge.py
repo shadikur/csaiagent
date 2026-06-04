@@ -19,6 +19,9 @@ from bson import ObjectId
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tts_bridge")
 
+# Global http client for connection pooling to optimize latency
+http_client = httpx.AsyncClient(timeout=30.0)
+
 app = FastAPI()
 
 # Enable CORS for frontend communication
@@ -192,6 +195,36 @@ async def get_me(authorization: str = Header(None)):
     except Exception as e:
         return JSONResponse(status_code=401, content={"error": str(e)})
 
+@app.post("/v1/auth/change-password")
+async def change_password(request: Request, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"error": "Authorization token required"})
+    try:
+        payload = decode_jwt_token(authorization.split("Bearer ")[-1].strip())
+        username = payload["username"]
+    except Exception as e:
+        return JSONResponse(status_code=401, content={"error": str(e)})
+        
+    req_json = await request.json()
+    old_password = req_json.get("old_password", "").strip()
+    new_password = req_json.get("new_password", "").strip()
+    
+    if not (old_password and new_password):
+        return JSONResponse(status_code=400, content={"error": "Old and new password required"})
+        
+    user = await users_col.find_one({"username": username})
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+        
+    if user["password_hash"] != hash_password(old_password):
+        return JSONResponse(status_code=400, content={"error": "Incorrect old password"})
+        
+    await users_col.update_one(
+        {"username": username},
+        {"$set": {"password_hash": hash_password(new_password)}}
+    )
+    return {"status": "success", "message": "Password changed successfully"}
+
 # ----------------- Business / Agent Studio CRUD Endpoints -----------------
 
 @app.get("/v1/businesses")
@@ -221,6 +254,7 @@ async def create_business(request: Request, authorization: str = Header(None)):
     name = req_json.get("name", "").strip()
     extension = req_json.get("extension", "").strip()
     voice = req_json.get("voice", "af_bella").strip()
+    teams_webhook_url = req_json.get("teams_webhook_url", "").strip()
     skills = req_json.get("skills", ["appointments"])
     prompt = req_json.get("prompt", "").strip()
     
@@ -240,6 +274,7 @@ async def create_business(request: Request, authorization: str = Header(None)):
             "name": name,
             "extension": extension,
             "voice": voice,
+            "teams_webhook_url": teams_webhook_url,
             "skills": skills,
             "prompt": prompt,
             "sip_trunk_id": trunk_id,
@@ -264,6 +299,7 @@ async def update_business(id: str, request: Request, authorization: str = Header
     req_json = await request.json()
     name = req_json.get("name", "").strip()
     voice = req_json.get("voice", "af_bella").strip()
+    teams_webhook_url = req_json.get("teams_webhook_url", "").strip()
     skills = req_json.get("skills", ["appointments"])
     prompt = req_json.get("prompt", "").strip()
     
@@ -276,6 +312,7 @@ async def update_business(id: str, request: Request, authorization: str = Header
             {"$set": {
                 "name": name,
                 "voice": voice,
+                "teams_webhook_url": teams_webhook_url,
                 "skills": skills,
                 "prompt": prompt
             }}
@@ -318,21 +355,72 @@ async def delete_business(id: str, authorization: str = Header(None)):
 @app.post("/v1/audio/speech")
 async def text_to_speech(request: Request):
     req_json = await request.json()
-    logger.info(f"Proxying TTS request to Kokoro-FastAPI: {req_json.get('input', '')[:40]}...")
+    voice = req_json.get("voice", "af_bella")
     
-    # Standardize input voice to af_bella if not specified
+    # Check if we should use gTTS or Kokoro
+    use_gtts = False
+    gtts_lang = "en"
+    
+    voice_lower = voice.lower()
+    if voice_lower.startswith("de") or voice_lower == "german":
+        use_gtts = True
+        gtts_lang = "de"
+    elif voice_lower.startswith("es") or voice_lower in ["ef_dora", "em_alex"]:
+        # Spanish: Kokoro supports es_la / ef_dora / em_alex. If the voice is "es", default to "ef_dora"
+        if voice_lower == "es":
+            req_json["voice"] = "ef_dora"
+    elif len(voice_lower) == 2 and voice_lower not in ["en", "es", "fr", "ja", "zh", "pt", "it"]:
+        # Other 2-letter languages not natively supported by Kokoro
+        use_gtts = True
+        gtts_lang = voice_lower
+
+    if use_gtts:
+        try:
+            from gtts import gTTS
+            import io
+            import subprocess
+            
+            text = req_json.get("input", "")
+            logger.info(f"Generating gTTS speech for lang={gtts_lang}: {text[:40]}...")
+            
+            tts = gTTS(text=text, lang=gtts_lang)
+            mp3_fp = io.BytesIO()
+            tts.write_to_fp(mp3_fp)
+            mp3_bytes = mp3_fp.getvalue()
+            
+            # Convert MP3 to WAV using ffmpeg
+            process = subprocess.Popen(
+                ["ffmpeg", "-i", "pipe:0", "-f", "wav", "pipe:1"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            wav_bytes, err = process.communicate(input=mp3_bytes)
+            
+            if process.returncode != 0:
+                logger.error(f"ffmpeg conversion failed: {err.decode(errors='ignore')}")
+                return Response(status_code=500, content="Audio conversion error")
+                
+            return StreamingResponse(
+                io.BytesIO(wav_bytes),
+                media_type="audio/wav"
+            )
+        except Exception as e:
+            logger.error(f"gTTS generation failed: {e}")
+            return Response(status_code=500, content=f"gTTS Error: {str(e)}")
+
+    # Otherwise proxy to Kokoro
+    logger.info(f"Proxying TTS request to Kokoro-FastAPI: {req_json.get('input', '')[:40]}...")
     if "voice" not in req_json or req_json["voice"] == "en_US-lessac-medium":
         req_json["voice"] = "af_bella"
         
     try:
-        client = httpx.AsyncClient()
-        req = client.build_request(
+        req = http_client.build_request(
             "POST",
             "http://127.0.0.1:8880/v1/audio/speech",
-            json=req_json,
-            timeout=30.0
+            json=req_json
         )
-        resp = await client.send(req, stream=True)
+        resp = await http_client.send(req, stream=True)
         
         async def stream_generator():
             try:
@@ -340,7 +428,6 @@ async def text_to_speech(request: Request):
                     yield chunk
             finally:
                 await resp.aclose()
-                await client.aclose()
                 
         return StreamingResponse(
             stream_generator(),
@@ -497,6 +584,45 @@ async def cancel_appointment(appointment_id: str):
 
 @app.get("/v1/calls/active")
 async def list_active_calls():
+    # Dynamically clean up stale active calls by checking LiveKit active rooms
+    try:
+        from livekit.protocol.room import ListRoomsRequest
+        key, secret = load_keys()
+        async with LiveKitAPI("http://127.0.0.1:7800", key, secret) as lkapi:
+            rooms_res = await lkapi.room.list_rooms(ListRoomsRequest())
+            active_room_names = {r.name for r in rooms_res.rooms}
+            
+            db_active_calls = await db["calls"].find({"status": "active"}).to_list(length=1000)
+            for call in db_active_calls:
+                room_name = call.get("room_name")
+                if room_name not in active_room_names:
+                    end_time = datetime.datetime.utcnow()
+                    start_time_str = call.get("start_time")
+                    duration = 0.0
+                    if start_time_str:
+                        try:
+                            start_time_clean = start_time_str.replace("Z", "+00:00")
+                            start_time_parsed = datetime.datetime.fromisoformat(start_time_clean)
+                            if start_time_parsed.tzinfo:
+                                end_time_aware = datetime.datetime.now(datetime.timezone.utc)
+                                duration = (end_time_aware - start_time_parsed).total_seconds()
+                            else:
+                                duration = (end_time - start_time_parsed).total_seconds()
+                        except Exception as parse_err:
+                            logger.error(f"Error parsing start_time {start_time_str}: {parse_err}")
+                    
+                    await db["calls"].update_one(
+                        {"_id": call["_id"]},
+                        {"$set": {
+                            "status": "completed",
+                            "end_time": end_time.isoformat(),
+                            "duration_seconds": max(0.0, duration)
+                        }}
+                    )
+                    logger.info(f"Dynamically cleaned up stale call {call['_id']} (room {room_name})")
+    except Exception as e:
+        logger.error(f"Error during dynamic active calls cleanup: {e}")
+
     calls = []
     try:
         cursor = db["calls"].find({"status": "active"}).sort("start_time", -1)

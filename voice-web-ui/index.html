@@ -35,8 +35,9 @@
             min-height: 100vh;
             display: flex;
             justify-content: center;
-            align-items: center;
+            align-items: flex-start;
             overflow-x: hidden;
+            padding: 40px 20px;
         }
 
         /* Glassmorphic Container */
@@ -56,6 +57,7 @@
             max-width: 440px;
             padding: 40px;
             text-align: center;
+            margin: auto;
         }
 
         #authContainer h2 {
@@ -80,7 +82,7 @@
             display: none; /* Shown dynamically on success */
             width: 100%;
             max-width: 1240px;
-            margin: 40px 20px;
+            margin: 0 auto;
             padding: 40px;
         }
 
@@ -540,6 +542,7 @@
             </div>
             <div class="header-controls">
                 <span class="user-tag" id="userTag">Role: Admin</span>
+                <button id="changePasswordBtn" class="btn btn-secondary" style="width: auto; padding: 10px 20px;">CHANGE PASSWORD</button>
                 <button id="logoutBtn" class="btn btn-secondary" style="width: auto; padding: 10px 20px;">LOGOUT</button>
             </div>
         </header>
@@ -686,7 +689,14 @@
                         <option value="am_michael">am_michael (English Male - Michael)</option>
                         <option value="bf_emma">bf_emma (British Female - Emma)</option>
                         <option value="bm_george">bm_george (British Male - George)</option>
+                        <option value="es">es (Spanish Female - Dora)</option>
+                        <option value="em_alex">em_alex (Spanish Male - Alex)</option>
+                        <option value="de">de (German Voice - gTTS)</option>
                     </select>
+                </div>
+                <div class="form-group">
+                    <label for="bizWebhook">Microsoft Teams Webhook URL</label>
+                    <input type="url" id="bizWebhook" class="form-control" placeholder="https://outlook.office.com/webhook/...">
                 </div>
                 <div class="form-group">
                     <label>Assigned Skillsets</label>
@@ -721,9 +731,41 @@
         </div>
     </div>
 
+    <!-- MODAL OVERLAY: Change Password -->
+    <div class="modal-overlay" id="passwordModalOverlay">
+        <div class="modal glass-panel">
+            <h3 style="font-size: 1.4rem; margin-bottom: 20px;">Change Administrator Password</h3>
+            <form id="passwordForm">
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="oldPasswordInput">Current Password</label>
+                    <input type="password" id="oldPasswordInput" class="form-control" placeholder="••••••••" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="newPasswordInput">New Password</label>
+                    <input type="password" id="newPasswordInput" class="form-control" placeholder="••••••••" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label for="confirmNewPasswordInput">Confirm New Password</label>
+                    <input type="password" id="confirmNewPasswordInput" class="form-control" placeholder="••••••••" required>
+                </div>
+                <div id="passwordError" style="color: var(--danger-color); font-size: 0.85rem; margin-bottom: 15px; display: none;"></div>
+                <div id="passwordSuccess" style="color: var(--success-color); font-size: 0.85rem; margin-bottom: 15px; display: none;"></div>
+                <div class="modal-buttons">
+                    <button type="submit" id="savePasswordBtn" class="btn">UPDATE PASSWORD</button>
+                    <button type="button" id="closePasswordModalBtn" class="btn btn-secondary">CANCEL</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
-        const API_URL = window.location.protocol + "//" + window.location.hostname + ":10201";
-        const LIVEKIT_WS = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.hostname + ":7800";
+        let API_URL = window.location.origin;
+        let LIVEKIT_WS = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host;
+
+        if (window.location.port === "10201") {
+            API_URL = window.location.protocol + "//" + window.location.hostname + ":10201";
+            LIVEKIT_WS = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.hostname + ":7800";
+        }
 
         // Global State
         let token = localStorage.getItem("gravity_token");
@@ -745,6 +787,15 @@
         const authError = document.getElementById("authError");
         const logoutBtn = document.getElementById("logoutBtn");
         const userTag = document.getElementById("userTag");
+        const changePasswordBtn = document.getElementById("changePasswordBtn");
+        const passwordModalOverlay = document.getElementById("passwordModalOverlay");
+        const closePasswordModalBtn = document.getElementById("closePasswordModalBtn");
+        const passwordForm = document.getElementById("passwordForm");
+        const oldPasswordInput = document.getElementById("oldPasswordInput");
+        const newPasswordInput = document.getElementById("newPasswordInput");
+        const confirmNewPasswordInput = document.getElementById("confirmNewPasswordInput");
+        const passwordError = document.getElementById("passwordError");
+        const passwordSuccess = document.getElementById("passwordSuccess");
 
         // Tabs
         const tabDashboard = document.getElementById("tabDashboard");
@@ -788,6 +839,7 @@
         const bizName = document.getElementById("bizName");
         const bizExtension = document.getElementById("bizExtension");
         const bizVoice = document.getElementById("bizVoice");
+        const bizWebhook = document.getElementById("bizWebhook");
         const skillAppointments = document.getElementById("skillAppointments");
         const bizPrompt = document.getElementById("bizPrompt");
         const saveBizBtn = document.getElementById("saveBizBtn");
@@ -841,6 +893,65 @@
             token = null;
             localStorage.removeItem("gravity_token");
             checkAuth();
+        });
+
+        // Change Password Modal triggers
+        changePasswordBtn.addEventListener("click", () => {
+            passwordError.style.display = "none";
+            passwordSuccess.style.display = "none";
+            oldPasswordInput.value = "";
+            newPasswordInput.value = "";
+            confirmNewPasswordInput.value = "";
+            passwordModalOverlay.style.display = "flex";
+        });
+
+        closePasswordModalBtn.addEventListener("click", () => {
+            passwordModalOverlay.style.display = "none";
+        });
+
+        passwordForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            passwordError.style.display = "none";
+            passwordSuccess.style.display = "none";
+
+            const oldPass = oldPasswordInput.value.trim();
+            const newPass = newPasswordInput.value.trim();
+            const confirmPass = confirmNewPasswordInput.value.trim();
+
+            if (newPass !== confirmPass) {
+                passwordError.textContent = "New passwords do not match";
+                passwordError.style.display = "block";
+                return;
+            }
+
+            try {
+                const res = await fetch(API_URL + "/v1/auth/change-password", {
+                    method: "POST",
+                    headers: { 
+                        "Content-Type": "application/json",
+                        "Authorization": "Bearer " + token
+                    },
+                    body: JSON.stringify({
+                        old_password: oldPass,
+                        new_password: newPass
+                    })
+                });
+
+                const data = await res.json();
+                if (res.ok) {
+                    passwordSuccess.textContent = "Password updated successfully!";
+                    passwordSuccess.style.display = "block";
+                    setTimeout(() => {
+                        passwordModalOverlay.style.display = "none";
+                    }, 1500);
+                } else {
+                    passwordError.textContent = data.error || "Failed to update password";
+                    passwordError.style.display = "block";
+                }
+            } catch (err) {
+                passwordError.textContent = "Server connection lost: " + err.message;
+                passwordError.style.display = "block";
+            }
         });
 
         // Tab Navigation
@@ -990,6 +1101,18 @@
             });
         }
 
+        // Handle Session/API Authorization Errors
+        function handleApiError(res, data) {
+            if (res.status === 401) {
+                alert("Session expired. Please log in again.");
+                token = null;
+                localStorage.removeItem("gravity_token");
+                checkAuth();
+                return true;
+            }
+            return false;
+        }
+
         // Delete Business
         async function deleteBiz(id) {
             if (!confirm("Are you sure you want to delete this business? All appointments and dynamic SIP dialplans will be removed.")) return;
@@ -1001,7 +1124,10 @@
                 if (res.ok) {
                     loadBusinesses();
                 } else {
-                    alert("Delete failed.");
+                    const data = await res.json().catch(() => ({}));
+                    if (!handleApiError(res, data)) {
+                        alert("Delete failed: " + (data.error || "Unknown error"));
+                    }
                 }
             } catch (err) {
                 alert("Connection failed: " + err.message);
@@ -1030,6 +1156,7 @@
             extensionGroup.style.display = "none";
             bizExtension.required = false;
             bizVoice.value = biz.voice;
+            bizWebhook.value = biz.teams_webhook_url || "";
             skillAppointments.checked = biz.skills.includes("appointments");
             bizPrompt.value = biz.prompt;
             modalTitle.textContent = "Update Agent Profile";
@@ -1051,6 +1178,7 @@
             const payload = {
                 name: bizName.value,
                 voice: bizVoice.value,
+                teams_webhook_url: bizWebhook.value,
                 skills: skills,
                 prompt: bizPrompt.value
             };
@@ -1076,7 +1204,9 @@
                     bizModalOverlay.style.display = "none";
                     loadBusinesses();
                 } else {
-                    alert("Operation failed: " + (data.error || "Unknown error"));
+                    if (!handleApiError(res, data)) {
+                        alert("Operation failed: " + (data.error || "Unknown error"));
+                    }
                 }
             } catch (err) {
                 alert("Connection failed: " + err.message);

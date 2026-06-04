@@ -7,8 +7,10 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import asyncio
 import logging
 import json
+import httpx
 from datetime import datetime
 from bson import ObjectId
+import re
 
 # Load local environment variables if present
 if os.path.exists(".env"):
@@ -57,22 +59,130 @@ def is_goodbye(text: str) -> bool:
     # Remove punctuation
     for c in ",.?!;:-":
         text = text.replace(c, " ")
+    # Normalize German umlauts and Spanish accents
+    text = text.replace("ö", "oe").replace("ä", "ae").replace("ü", "ue").replace("ß", "ss")
+    text = text.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+    
     words = text.split()
-    goodbye_words = {"goodbye", "bye", "farewell"}
+    goodbye_words = {
+        # English
+        "goodbye", "bye", "farewell",
+        # German
+        "tschüss", "tschuess", "wiederhören", "wiederhoeren", "wiedersehen", "ciao",
+        # Spanish
+        "adios", "chao"
+    }
     if any(w in goodbye_words for w in words):
         return True
-    phrases = ["have a great day", "have a nice day", "take care"]
+        
+    phrases = [
+        # English
+        "have a great day", "have a nice day", "take care",
+        # German
+        "schönen tag", "schoenen tag",
+        # Spanish
+        "hasta luego", "nos vemos", "buen día", "buen dia"
+    ]
     if any(p in text for p in phrases):
         return True
     return False
 
 
+def extract_greeting(prompt_str: str, business_name: str) -> str:
+    normalized = prompt_str.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    
+    # Try double quotes first
+    match = re.search(r'say\s*:\s*\n*\s*"([^"]+)"', normalized, re.IGNORECASE)
+    if match:
+        greeting = match.group(1).strip()
+        greeting = greeting.replace("[User Name]", business_name).replace("[Business Name]", business_name)
+        return greeting
+        
+    # Try single quotes fallback
+    match = re.search(r"say\s*:\s*\n*\s*'([^']+)'", normalized, re.IGNORECASE)
+    if match:
+        greeting = match.group(1).strip()
+        greeting = greeting.replace("[User Name]", business_name).replace("[Business Name]", business_name)
+        return greeting
+        
+    return f"Hello! Thank you for calling {business_name}. How can I help you today?"
+
+
+class FilteredAgent(Agent):
+    def tts_node(self, text, model_settings):
+        async def filtered_text_generator():
+            paren_level = 0
+            bracket_level = 0
+            brace_level = 0
+            async for chunk in text:
+                cleaned_chunk = ""
+                for char in chunk:
+                    if char == '(':
+                        paren_level += 1
+                    elif char == ')':
+                        paren_level = max(0, paren_level - 1)
+                    elif char == '[':
+                        bracket_level += 1
+                    elif char == ']':
+                        bracket_level = max(0, bracket_level - 1)
+                    elif char == '{':
+                        brace_level += 1
+                    elif char == '}':
+                        brace_level = max(0, brace_level - 1)
+                    else:
+                        if paren_level == 0 and bracket_level == 0 and brace_level == 0:
+                            cleaned_chunk += char
+                if cleaned_chunk:
+                    yield cleaned_chunk
+                
+        return super().tts_node(filtered_text_generator(), model_settings)
+
+    def llm_node(
+        self,
+        chat_ctx: llm.ChatContext,
+        tools: list[llm.Tool],
+        model_settings,
+    ):
+        # Merge consecutive user/assistant messages to prevent Ollama from failing tool-calling
+        cleaned_ctx = llm.ChatContext()
+        last_role = None
+        for item in chat_ctx.items:
+            if isinstance(item, llm.ChatMessage) and item.role in ('user', 'assistant') and item.role == last_role:
+                if cleaned_ctx.items:
+                    existing_item = cleaned_ctx.items[-1]
+                    if isinstance(existing_item, llm.ChatMessage):
+                        merged_text = existing_item.text_content + '\n' + item.text_content
+                        existing_item.content = [merged_text]
+                        continue
+            if isinstance(item, llm.ChatMessage):
+                cleaned_ctx.items.append(
+                    llm.ChatMessage(
+                        role=item.role,
+                        content=list(item.content) if isinstance(item.content, list) else [item.content],
+                        id=item.id,
+                        type=item.type,
+                        interrupted=item.interrupted,
+                        transcript_confidence=item.transcript_confidence,
+                        extra=item.extra
+                    )
+                )
+                last_role = item.role
+            else:
+                cleaned_ctx.items.append(item)
+                last_role = getattr(item, 'role', None)
+                
+        return super().llm_node(cleaned_ctx, tools, model_settings)
+
+
 class AppointmentTools:
-    def __init__(self, business_id: ObjectId):
+    def __init__(self, business_id: ObjectId, room_name: str, room, session_holder: dict = None):
         self.client = AsyncIOMotorClient("mongodb://127.0.0.1:27017")
         self.db = self.client["voice_agent"]
         self.appointments = self.db["appointments"]
         self.business_id = business_id
+        self.room_name = room_name
+        self.room = room
+        self.session_holder = session_holder or {}
 
     @llm.function_tool
     async def check_availability(self, time: str) -> str:
@@ -145,6 +255,214 @@ class AppointmentTools:
             return f"Success! The appointment at {time} for phone {phone} has been cancelled."
         return f"No scheduled appointment was found for phone {phone} at {time}."
 
+    @llm.function_tool
+    async def transfer_call(self, extension: str, confirmed: bool = False) -> str:
+        """Transfer the call to an internal extension on the PBX. Call this ONLY when the user explicitly asks to be transferred, put on hold, or connected to another person, department, or technical support.
+        
+        Args:
+            extension: The extension number or department to transfer to.
+            confirmed: Set to True if the caller has explicitly confirmed they want to be transferred. If they have not explicitly confirmed yet, this must be False.
+        """
+        extension = (extension or "").strip()
+        if not extension:
+            return "Error: Please specify the extension number to transfer to."
+        
+        if not confirmed:
+            return (
+                "Error: You must first ask the caller for confirmation before transferring them. "
+                "Please politely ask: 'Would you like me to transfer you to our Technical Support (or Billing) team?' "
+                "and wait for their confirmation response. Do not perform the transfer yet."
+            )
+        
+        # Find the SIP participant in the room and resolve host
+        participant_identity = None
+        sip_hostname = "199.47.47.106" # Default fallback hostname
+        for identity, participant in self.room.remote_participants.items():
+            if "sip.phoneNumber" in participant.attributes:
+                participant_identity = identity
+                sip_hostname = participant.attributes.get("sip.hostname", sip_hostname)
+                break
+        
+        if not participant_identity:
+            # Fall back to any remote participant
+            if self.room.remote_participants:
+                participant_identity = list(self.room.remote_participants.keys())[0]
+                p = self.room.remote_participants[participant_identity]
+                sip_hostname = p.attributes.get("sip.hostname", sip_hostname)
+                
+        if not participant_identity:
+            return "Error: No active participant found in the room to transfer."
+            
+        # Ensure it is a valid SIP or TEL URI, appending hostname to SIP URIs if missing
+        if not (extension.startswith("sip:") or extension.startswith("sips:") or extension.startswith("tel:")):
+            transfer_to = f"sip:{extension}@{sip_hostname}"
+        else:
+            transfer_to = extension
+            if (transfer_to.startswith("sip:") or transfer_to.startswith("sips:")) and "@" not in transfer_to:
+                transfer_to = f"{transfer_to}@{sip_hostname}"
+            
+        try:
+            # Wait for any currently queued/speaking assistant speech to complete playout
+            session = self.session_holder.get("session")
+            if session:
+                speech = session.current_speech
+                if speech:
+                    try:
+                        logging.info("Waiting for agent to finish speaking before triggering SIP transfer...")
+                        await asyncio.wait_for(speech.wait_for_playout(), timeout=4.0)
+                    except Exception as e:
+                        logging.warning(f"Timeout/error waiting for speech playout before transfer: {e}")
+            
+            from livekit.api import LiveKitAPI
+            from livekit.protocol.sip import TransferSIPParticipantRequest
+            
+            url = os.environ.get("LIVEKIT_URL", "http://127.0.0.1:7800").replace("ws://", "http://").replace("wss://", "https://")
+            key = os.environ.get("LIVEKIT_API_KEY", "devkey1778495864")
+            secret = os.environ.get("LIVEKIT_API_SECRET", "devsecret1778495864")
+            
+            logging.info(f"Transferring participant {participant_identity} in room {self.room_name} to URI {transfer_to}...")
+            
+            async with LiveKitAPI(url=url, api_key=key, api_secret=secret) as lkapi:
+                await lkapi.sip.transfer_sip_participant(
+                    TransferSIPParticipantRequest(
+                        room_name=self.room_name,
+                        participant_identity=participant_identity,
+                        transfer_to=transfer_to
+                    )
+                )
+            return f"Success! Transferring the call to extension {extension}. Goodbye!"
+        except Exception as e:
+            logging.error(f"Failed to transfer call: {e}")
+            return f"Error: Failed to perform transfer: {str(e)}"
+
+    @llm.function_tool
+    async def take_message(
+        self,
+        caller_name: str,
+        phone_number: str,
+        reason_for_call: str,
+        company: str = "None",
+        urgency: str = "False",
+        best_callback_time: str = "None"
+    ) -> str:
+        """Take a message for the user when they are unavailable. Call this ONLY when the caller explicitly asks to leave a message, take a message, or pass on a message/note.
+        
+        Args:
+            caller_name: The name of the person calling.
+            phone_number: The callback phone number.
+            reason_for_call: The detailed message or reason they are calling.
+            company: The company or organization they represent, if any.
+            urgency: Whether the message is urgent (e.g. 'True' or 'False').
+            best_callback_time: Best time to call back, if specified.
+        """
+        caller_name = (caller_name or "").strip()
+        phone_number = (phone_number or "").strip()
+        reason_for_call = (reason_for_call or "").strip()
+        company = (company or "").strip()
+        urgency = (urgency or "").strip()
+        best_callback_time = (best_callback_time or "").strip()
+        
+        # Check for placeholders or missing values
+        missing = []
+        is_name_placeholder = not caller_name or any(p in caller_name.lower() for p in ["unknown", "not provided", "placeholder", "undefined", "null", "none", "your", "name", "caller", "user"])
+        
+        # Phone number must contain at least 5 digits and not contain placeholder words
+        digits_count = sum(c.isdigit() for c in phone_number)
+        is_phone_placeholder = (
+            not phone_number 
+            or digits_count < 5 
+            or any(p in phone_number.lower() for p in ["unknown", "not", "provided", "placeholder", "undefined", "null", "none", "your", "caller", "web", "sandbox", "phone", "number"])
+        )
+        
+        is_reason_placeholder = (
+            not reason_for_call 
+            or len(reason_for_call.strip()) < 5
+            or any(p in reason_for_call.lower() for p in ["unknown", "not provided", "placeholder", "undefined", "null", "none", "your", "reason"])
+        )
+        
+        if is_name_placeholder:
+            missing.append("caller name")
+        if is_phone_placeholder:
+            missing.append("caller phone number")
+        if is_reason_placeholder:
+            missing.append("detailed message content")
+            
+        if missing:
+            return (
+                f"Error: Cannot record message. The following required details are missing, invalid, or placeholders: {', '.join(missing)}. "
+                "Please politely ask the caller for these details (e.g., 'May I have your name and phone number please?') "
+                "before calling this tool."
+            )
+            
+        message_doc = {
+            "business_id": self.business_id,
+            "room_name": self.room_name,
+            "caller_name": caller_name,
+            "phone_number": phone_number,
+            "reason_for_call": reason_for_call,
+            "company": company,
+            "urgency": urgency,
+            "best_callback_time": best_callback_time,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        try:
+            await self.db["messages"].insert_one(message_doc)
+            logging.info(f"Successfully recorded message from {caller_name} in MongoDB.")
+            
+            # Post the message immediately to the Teams Webhook in the background
+            async def send_message_webhook_bg():
+                try:
+                    latest_biz = await self.db["businesses"].find_one({"_id": self.business_id})
+                    if latest_biz and latest_biz.get("teams_webhook_url"):
+                        webhook_url = latest_biz["teams_webhook_url"]
+                        logging.info(f"Teams webhook configured for messages: {webhook_url}. Posting message in background...")
+                        
+                        payload = {
+                            "@type": "MessageCard",
+                            "@context": "http://schema.org/extensions",
+                            "themeColor": "FF007F",
+                            "summary": f"New Message: {caller_name}",
+                            "title": "📝 New Message Taken",
+                            "sections": [
+                                {
+                                    "activityTitle": f"Recipient: **{latest_biz.get('name', 'User')}**",
+                                    "activitySubtitle": f"Timestamp: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
+                                    "facts": [
+                                        {"name": "Caller Name", "value": caller_name},
+                                        {"name": "Company", "value": company},
+                                        {"name": "Phone Number", "value": phone_number},
+                                        {"name": "Urgency", "value": urgency},
+                                        {"name": "Best Callback Time", "value": best_callback_time}
+                                    ],
+                                    "markdown": True
+                                },
+                                {
+                                    "startGroup": True,
+                                    "title": "Message Content",
+                                    "text": reason_for_call
+                                }
+                            ]
+                        }
+                        
+                        async with httpx.AsyncClient() as http_client:
+                            resp = await http_client.post(webhook_url, json=payload, timeout=10.0)
+                            if resp.status_code >= 400:
+                                logging.error(f"Teams message webhook returned error {resp.status_code}: {resp.text}")
+                            else:
+                                logging.info("Successfully posted message to Microsoft Teams (background).")
+                except Exception as w_err:
+                    logging.error(f"Error in background message webhook task: {w_err}")
+            
+            asyncio.create_task(send_message_webhook_bg())
+            
+        except Exception as ex:
+            logging.error(f"Error saving or sending message: {ex}")
+            
+        return "Success: The message has been recorded and sent to the user."
+
+
+
 
 async def request_handler(request: JobRequest) -> None:
     logging.info(f"Received an incoming job request for room: {request.room.name}")
@@ -159,6 +477,56 @@ async def request_handler(request: JobRequest) -> None:
 async def entrypoint(ctx: JobContext):
     logging.info(f"Connecting worker process to room session: {ctx.room.name}")
     await ctx.connect()
+
+    # Start background line hum/static noise to simulate real human telephone connection
+    try:
+        from livekit import rtc
+        import numpy as np
+        
+        noise_source = rtc.AudioSource(sample_rate=16000, num_channels=1)
+        noise_track = rtc.LocalAudioTrack.create_audio_track("background_noise", noise_source)
+        await ctx.room.local_participant.publish_track(noise_track)
+        
+        async def generate_noise():
+            sample_rate = 16000
+            frame_duration = 0.02
+            num_samples = int(sample_rate * frame_duration)
+            amplitude = 40.0  # Soft hum
+            state = 0.0
+            
+            try:
+                while True:
+                    samples = np.zeros(num_samples, dtype=np.int16)
+                    for i in range(num_samples):
+                        white = np.random.uniform(-1.0, 1.0)
+                        state = 0.9 * state + 0.1 * white
+                        samples[i] = int(state * amplitude)
+                    
+                    frame = rtc.AudioFrame(
+                        data=samples.tobytes(),
+                        sample_rate=sample_rate,
+                        num_channels=1,
+                        samples_per_channel=num_samples
+                    )
+                    await noise_source.capture_frame(frame)
+                    await asyncio.sleep(frame_duration)
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logging.error(f"Error in noise generation: {e}")
+                
+        noise_task = asyncio.create_task(generate_noise())
+        
+        async def cancel_noise():
+            noise_task.cancel()
+            try:
+                await noise_task
+            except:
+                pass
+        ctx.add_shutdown_callback(cancel_noise)
+        logging.info("Background noise generation successfully initialized.")
+    except Exception as e:
+        logging.error(f"Failed to initialize background noise: {e}")
     
     await asyncio.sleep(0.5)
     
@@ -219,13 +587,82 @@ async def entrypoint(ctx: JobContext):
         skills = ["appointments"]
         business_id = ObjectId("6659f13ba97312fba0a91e5c")
         
+    # Multilingual customization
+    greeting_text = extract_greeting(agent_prompt, agent_name)
+    voice_lower = voice_model.lower()
+    if voice_lower.startswith("de") or voice_lower == "german":
+        if greeting_text.startswith("Hello! Thank you for calling"):
+            greeting_text = f"Hallo! Vielen Dank für Ihren Anruf bei {agent_name}. Wie kann ich Ihnen heute helfen?"
+        agent_prompt += (
+            "\n\nCRITICAL: You must speak and respond ENTIRELY in German (Deutsch). Do not use English under any circumstances. "
+            "Ensure all responses are written in German. Even if the user speaks in English, translate it to German and respond in German."
+        )
+    elif voice_lower.startswith("es") or voice_lower in ["ef_dora", "em_alex"]:
+        if greeting_text.startswith("Hello! Thank you for calling"):
+            greeting_text = f"¡Hola! Gracias por llamar a {agent_name}. ¿Cómo le puedo ayudar hoy?"
+        agent_prompt += (
+            "\n\nCRITICAL: You must speak and respond ENTIRELY in Spanish (Español). Do not use English under any circumstances. "
+            "Ensure all responses are written in Spanish. Even if the user speaks in English, translate it to Spanish and respond in Spanish."
+        )
+        
+    # Format and Output Constraints
+    agent_prompt += (
+        "\n\nCRITICAL formatting and capability rules:\n"
+        "1. Never output any parenthetical notes, chain-of-thought, or internal justifications (like '(Note: ...)' or similar). Do not write notes like (Note: Since the caller didn't request any booking action, no function call is made).\n"
+        "2. Only output the direct words you would speak to the caller.\n"
+        "3. Keep answers very short, concise, and natural (one or two sentences).\n"
+        "4. You are strictly FORBIDDEN from inventing, hallucinating, or disclosing details (such as prices, services, policies, guarantees, employee names, or specific business options) that are NOT explicitly mentioned in your custom instructions. If the caller asks for information not present in your instructions, you must politely state that you do not have that information and offer to connect them or take a message.\n"
+    )
+
+    prompt_lower = agent_prompt.lower()
+    if "transfer" in prompt_lower or "extension" in prompt_lower:
+        agent_prompt += (
+            "4. You have the ability to transfer calls to internal extensions using the transfer_call tool. "
+            "If the user asks to be transferred or speak to a human, you must first ask for their confirmation "
+            "(e.g. 'Would you like me to transfer you?'). You must ONLY call transfer_call with confirmed=True "
+            "after the caller has explicitly confirmed they want to be transferred. Otherwise, call it with confirmed=False "
+            "(which will not perform the transfer and remind you to ask them first).\n"
+        )
+
+    if "appointments" in skills:
+        agent_prompt += (
+            "\n\nAppointments Booking Rules:\n"
+            "- You MUST call the check_availability tool to verify a slot before booking.\n"
+            "- You MUST call the book_appointment tool to officially book an appointment.\n"
+            "- You are strictly FORBIDDEN from booking or saying an appointment is scheduled/confirmed/booked unless you have first collected the caller's Name and Phone Number.\n"
+            "- If the caller's Name or Phone Number is missing, you MUST ask the caller for them first.\n"
+            "- Do NOT tell the user their appointment is booked or scheduled until the book_appointment tool has been executed and returned a success message.\n"
+        )
+        
+    # Unconditionally include message taking rules
+    agent_prompt += (
+        "\n\nMessage Taking Rules:\n"
+        "- You MUST call the take_message tool to record a message when the caller wants to leave a message, note, or when the user is unavailable.\n"
+        "- You are strictly FORBIDDEN from calling the take_message tool or saying you will pass on the message/note/goodbye unless you have first collected the caller's Name, Phone Number, and their detailed message.\n"
+        "- If the caller's Name, Phone Number, or detailed message is missing, you MUST ask the caller for them first.\n"
+        "- If the caller asks you to 'call me back' or leave a call back note, you MUST ask them: 'What is the best phone number for Shadikur to call you back at?' and you are FORBIDDEN from using placeholders or saying goodbye without asking for their specific digits-based callback phone number first.\n"
+        "- Do NOT tell the caller that you will pass on their message, leave a note, or say goodbye until the take_message tool has been executed and returned a success message.\n"
+        "- Do NOT call the take_message tool with placeholder values like 'Unknown', 'Unknown Caller', 'Not Provided', 'Your Phone Number', 'web-sandbox', or 'None'.\n"
+    )
+        
     # Initialize Core Model Engines
     vad_model = silero.VAD.load(
         min_silence_duration=0.3,
         min_speech_duration=0.1,
         prefix_padding_duration=0.2
     )
-    stt_model = openai.STT(base_url="http://127.0.0.1:8000/v1", api_key="local", model="base.en")
+    stt_lang = "en"
+    if voice_lower.startswith("de") or voice_lower == "german":
+        stt_lang = "de"
+    elif voice_lower.startswith("es") or voice_lower in ["ef_dora", "em_alex"]:
+        stt_lang = "es"
+        
+    stt_model = openai.STT(
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="local",
+        model="small",
+        language=stt_lang
+    )
 
     # Warm up the STT model in background to avoid latency on first user speech
     try:
@@ -233,7 +670,7 @@ async def entrypoint(ctx: JobContext):
         async def warmup_stt():
             try:
                 import numpy as np
-                from livekit.agents import AudioFrame
+                from livekit.rtc import AudioFrame
                 # 100ms of silence at 16kHz
                 data = np.zeros(1600, dtype=np.int16)
                 frame = AudioFrame(data.tobytes(), 16000, 1, 1600)
@@ -262,9 +699,12 @@ async def entrypoint(ctx: JobContext):
         logging.info("Warming up LLM model...")
         async def warmup_llm():
             try:
-                from livekit.agents.llm import ChatMessage
-                # Send a tiny query to trigger Ollama loading the Llama model into GPU RAM
-                await llm_model.chat(history=[ChatMessage(role="user", content="hello")])
+                from livekit.agents.llm import ChatContext
+                chat_ctx = ChatContext()
+                chat_ctx.add_message(role="user", content="hello")
+                async with llm_model.chat(chat_ctx=chat_ctx) as stream:
+                    async for chunk in stream:
+                        pass
                 logging.info("LLM warmup complete.")
             except Exception as ex:
                 logging.warning(f"LLM warmup failed: {ex}")
@@ -295,10 +735,25 @@ async def entrypoint(ctx: JobContext):
     except Exception as e:
         logging.warning(f"Failed to schedule TTS warmup: {e}")
     
+    session_holder = {}
     from livekit.agents.llm import find_function_tools
+    all_tools = find_function_tools(AppointmentTools(business_id, ctx.room.name, ctx.room, session_holder))
     tools_list = []
+    
+    # Always include take_message tool as it is a base receptionist capability
+    take_msg_tool = next((t for t in all_tools if t.info.name == "take_message"), None)
+    if take_msg_tool:
+        tools_list.append(take_msg_tool)
+        
     if "appointments" in skills:
-        tools_list = find_function_tools(AppointmentTools(business_id))
+        # Include appointment tools
+        tools_list.extend([t for t in all_tools if t.info.name in ["check_availability", "book_appointment", "cancel_appointment"]])
+        
+    # Expose call transfer ONLY if the custom prompt explicitly mentions transfer / extension
+    if "transfer" in prompt_lower or "extension" in prompt_lower:
+        transfer_tool = next((t for t in all_tools if t.info.name == "transfer_call"), None)
+        if transfer_tool:
+            tools_list.append(transfer_tool)
         
     # Latency & Turn Handling configuration
     turn_handling = {
@@ -315,7 +770,7 @@ async def entrypoint(ctx: JobContext):
     }
         
     # Instantiating the validated Agent configuration layout
-    assistant = Agent(
+    assistant = FilteredAgent(
         vad=vad_model,
         stt=stt_model,
         llm=llm_model,
@@ -356,6 +811,7 @@ async def entrypoint(ctx: JobContext):
         tools=tools_list,
         turn_handling=turn_handling
     )
+    session_holder["session"] = session
 
     async def save_to_mongo(dialog):
         try:
@@ -437,11 +893,86 @@ async def entrypoint(ctx: JobContext):
             logging.info("Room empty. Shutting down worker...")
             ctx.shutdown()
             
+    async def send_teams_summary(webhook_url: str, transcript: list, duration_seconds: float):
+        try:
+            if not transcript:
+                summary_text = "No conversation recorded (call was disconnected immediately)."
+            else:
+                # Format transcript for LLM
+                formatted_transcript = ""
+                for turn in transcript:
+                    role_name = "Caller" if turn["role"] == "user" else "AI Assistant"
+                    formatted_transcript += f"{role_name}: {turn['text']}\n"
+                
+                summary_prompt = (
+                    "You are a helpful assistant. Below is the transcript of a voice call. "
+                    "Provide a concise summary of the call (2-3 sentences), highlighting any actions taken (e.g. appointments booked or cancelled, or main user inquiry). "
+                    "Do not output anything else but the summary."
+                )
+                
+                from livekit.agents.llm import ChatContext
+                chat_ctx = ChatContext()
+                chat_ctx.add_message(role="system", content=summary_prompt)
+                chat_ctx.add_message(role="user", content=f"Call Transcript:\n{formatted_transcript}")
+                
+                logging.info("Requesting call summary from Ollama...")
+                chunks = []
+                async with llm_model.chat(chat_ctx=chat_ctx) as stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+                summary_text = "".join(chunks).strip()
+            
+            logging.info(f"Generated summary: {summary_text}")
+            
+            # Send to Microsoft Teams via Webhook (MessageCard format)
+            duration_mins = int(duration_seconds // 60)
+            duration_secs = int(duration_seconds % 60)
+            duration_str = f"{duration_mins:02d}:{duration_secs:02d}"
+            
+            payload = {
+                "@type": "MessageCard",
+                "@context": "http://schema.org/extensions",
+                "themeColor": "00F2FE",
+                "summary": f"Voice Call Summary: {agent_name}",
+                "title": "📞 Voice Call Session Completed",
+                "sections": [
+                    {
+                        "activityTitle": f"Agent Profile: **{agent_name}** (Ext {extension})",
+                        "activitySubtitle": f"Timestamp: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
+                        "facts": [
+                            {"name": "Caller Number", "value": call_record.get("phone_number", "web-sandbox")},
+                            {"name": "Duration", "value": duration_str},
+                            {"name": "Status", "value": "Completed"}
+                        ],
+                        "markdown": True
+                    },
+                    {
+                        "startGroup": True,
+                        "title": "Call Summary",
+                        "text": summary_text
+                    }
+                ]
+            }
+            
+            async with httpx.AsyncClient() as http_client:
+                resp = await http_client.post(webhook_url, json=payload, timeout=15.0)
+                if resp.status_code >= 400:
+                    logging.error(f"Teams webhook returned error {resp.status_code}: {resp.text}")
+                else:
+                    logging.info("Successfully posted call summary to Microsoft Teams.")
+        except Exception as ex:
+            logging.error(f"Failed to generate or send Teams summary: {ex}")
+
     async def close_call_record():
         try:
             end_time = datetime.utcnow()
             start_time_parsed = datetime.fromisoformat(call_record["start_time"])
             duration = (end_time - start_time_parsed).total_seconds()
+            
+            # Fetch the updated transcript from the DB
+            updated_call = await db["calls"].find_one({"room_name": ctx.room.name})
+            transcript = updated_call.get("transcript", []) if updated_call else []
             
             await db["calls"].update_many(
                 {"room_name": ctx.room.name, "status": "active"},
@@ -452,6 +983,13 @@ async def entrypoint(ctx: JobContext):
                 }}
             )
             logging.info(f"Archived call history in MongoDB for room {ctx.room.name}. Duration: {duration}s")
+            
+            # Trigger Teams Webhook if configured
+            latest_biz = await db["businesses"].find_one({"_id": business_id})
+            if latest_biz and latest_biz.get("teams_webhook_url"):
+                webhook_url = latest_biz["teams_webhook_url"]
+                logging.info(f"Teams webhook configured: {webhook_url}. Sending summary post...")
+                await send_teams_summary(webhook_url, transcript, duration)
         except Exception as e:
             logging.error(f"Error archiving call: {e}")
         
@@ -472,7 +1010,7 @@ async def entrypoint(ctx: JobContext):
         logging.warning(f"Error waiting for subscription: {e}")
 
     # Dynamically speak the starting greeting based on the resolved business name
-    session.say(f"Hello! Thank you for calling {agent_name}. How can I help you today?", allow_interruptions=True)
+    session.say(greeting_text, allow_interruptions=True)
 
     await session.wait_for_inactive()
 
