@@ -328,12 +328,11 @@ class AppointmentTools:
         return f"No scheduled appointment was found for phone {phone} at {time}."
 
     @llm.function_tool
-    async def transfer_call(self, extension: str, confirmed: bool = False) -> str:
-        """Transfer the call to an internal extension on the PBX. Call this ONLY when the user explicitly asks to be transferred, put on hold, or connected to another person, department, or technical support.
+    async def transfer_call(self, extension: str) -> str:
+        """Transfer the call to an internal extension on the PBX. Call this ONLY when the user explicitly requests to be transferred, and they have already confirmed they want to be transferred. You are strictly forbidden from calling this tool unless the transfer is confirmed.
         
         Args:
             extension: The extension number or department to transfer to.
-            confirmed: Set to True if the caller has explicitly confirmed they want to be transferred. If they have not explicitly confirmed yet, this must be False.
         """
         extension = (extension or "").strip()
         if not extension:
@@ -345,13 +344,6 @@ class AppointmentTools:
             return (
                 f"Error: '{extension}' is not a valid extension. Extensions must be numeric digits (e.g., '100', '101', '502'). "
                 "You are strictly forbidden from transferring to names like 'Synthia' or 'Shadikur'. Please politely explain this to the caller."
-            )
-        
-        if not confirmed:
-            return (
-                "Error: You must first ask the caller for confirmation before transferring them. "
-                "Please politely ask: 'Would you like me to transfer you to our Technical Support (or Billing) team?' "
-                "and wait for their confirmation response. Do not perform the transfer yet."
             )
         
         # Find the SIP participant in the room and resolve host
@@ -723,7 +715,7 @@ async def entrypoint(ctx: JobContext):
         agent_prompt += (
             "4. You have the ability to transfer calls to internal extensions using the transfer_call tool. "
             "If the user asks to be transferred or speak to a human, you must first ask for their confirmation "
-            "(e.g. 'Would you like me to transfer you?'). You must ONLY call transfer_call (with confirmed=True) "
+            "(e.g. 'Would you like me to transfer you?'). You must ONLY call the transfer_call tool "
             "after the caller has explicitly confirmed they want to be transferred. If they have not explicitly confirmed yet, "
             "do NOT call the transfer_call tool; instead, respond directly in conversation asking for their confirmation.\n"
         )
@@ -742,7 +734,7 @@ async def entrypoint(ctx: JobContext):
     # Unconditionally include message taking rules
     agent_prompt += (
         "\n\nMessage Taking Rules:\n"
-        "- You MUST call the take_message tool to record a message when the caller wants to leave a message, note, or when the user is unavailable.\n"
+        "- You MUST call the take_message tool to record a message ONLY when the caller explicitly requests to leave a message or note, and ONLY after you have successfully collected the caller's Name, Phone Number, and detailed message.\n"
         "- You are strictly FORBIDDEN from calling the take_message tool or saying you will pass on the message/note/goodbye unless you have first collected the caller's Name, Phone Number, and their detailed message.\n"
         "- If the caller's Name, Phone Number, or detailed message is missing, you MUST ask the caller for them first.\n"
         "- Do NOT call the take_message tool if the caller's name, phone number, or detailed message is missing or placeholders. Instead, respond directly in conversation to ask the caller for the missing information.\n"
