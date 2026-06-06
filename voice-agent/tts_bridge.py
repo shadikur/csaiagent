@@ -2,6 +2,7 @@ import io
 import os
 import time
 import json
+import asyncio
 import logging
 import httpx
 import hashlib
@@ -23,6 +24,21 @@ logger = logging.getLogger("tts_bridge")
 http_client = httpx.AsyncClient(timeout=30.0)
 
 app = FastAPI()
+
+@app.on_event("startup")
+async def startup_event():
+    async def periodic_sip_sync():
+        while True:
+            try:
+                logger.info("Running periodic SIP trunks sync...")
+                from sync_sip import sync
+                await sync()
+                logger.info("Periodic SIP trunks sync completed successfully.")
+            except Exception as e:
+                logger.error(f"Error in periodic SIP trunks sync: {e}")
+            await asyncio.sleep(600)  # Run every 10 minutes
+
+    asyncio.create_task(periodic_sip_sync())
 
 # Enable CORS for frontend communication
 app.add_middleware(
