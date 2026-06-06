@@ -64,6 +64,9 @@ def is_goodbye(text: str) -> bool:
     text = text.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
     
     words = text.split()
+    if not words:
+        return False
+        
     goodbye_words = {
         # English
         "goodbye", "bye", "farewell",
@@ -72,9 +75,10 @@ def is_goodbye(text: str) -> bool:
         # Spanish
         "adios", "chao"
     }
-    if any(w in goodbye_words for w in words):
-        return True
-        
+    
+    # Check if any goodbye word is present
+    has_goodbye_word = any(w in goodbye_words for w in words)
+    
     phrases = [
         # English
         "have a great day", "have a nice day", "take care",
@@ -83,8 +87,38 @@ def is_goodbye(text: str) -> bool:
         # Spanish
         "hasta luego", "nos vemos", "buen día", "buen dia"
     ]
-    if any(p in text for p in phrases):
+    has_goodbye_phrase = any(p in text for p in phrases)
+    
+    if not (has_goodbye_word or has_goodbye_phrase):
+        return False
+        
+    # If it is a very short sentence (e.g. 1-3 words), it is highly likely to be a goodbye
+    if len(words) <= 3:
         return True
+        
+    # Request-oriented intent keywords
+    request_keywords = {
+        "need", "help", "support", "transfer", "update", "question", 
+        "book", "appointment", "cancel", "message", "check", "schedule", "billing"
+    }
+    
+    # If it contains request keywords, it's likely a query (e.g. mistranscribed greeting or starting filler)
+    if any(k in words for k in request_keywords):
+        # Only count as goodbye if the goodbye word is the very last word of the sentence
+        if words[-1] in goodbye_words:
+            return True
+        return False
+        
+    # If it doesn't contain request keywords, check if it ends with a goodbye word
+    if words[-1] in goodbye_words:
+        return True
+        
+    # Or if one of the goodbye phrases is at the end of the text
+    for p in phrases:
+        if text.endswith(p):
+            return True
+            
+    # Default to False for long sentences unless explicitly ending in goodbye
     return False
 
 
@@ -689,9 +723,9 @@ async def entrypoint(ctx: JobContext):
         agent_prompt += (
             "4. You have the ability to transfer calls to internal extensions using the transfer_call tool. "
             "If the user asks to be transferred or speak to a human, you must first ask for their confirmation "
-            "(e.g. 'Would you like me to transfer you?'). You must ONLY call transfer_call with confirmed=True "
-            "after the caller has explicitly confirmed they want to be transferred. Otherwise, call it with confirmed=False "
-            "(which will not perform the transfer and remind you to ask them first).\n"
+            "(e.g. 'Would you like me to transfer you?'). You must ONLY call transfer_call (with confirmed=True) "
+            "after the caller has explicitly confirmed they want to be transferred. If they have not explicitly confirmed yet, "
+            "do NOT call the transfer_call tool; instead, respond directly in conversation asking for their confirmation.\n"
         )
 
     if "appointments" in skills:
@@ -701,6 +735,7 @@ async def entrypoint(ctx: JobContext):
             "- You MUST call the book_appointment tool to officially book an appointment.\n"
             "- You are strictly FORBIDDEN from booking or saying an appointment is scheduled/confirmed/booked unless you have first collected the caller's Name and Phone Number.\n"
             "- If the caller's Name or Phone Number is missing, you MUST ask the caller for them first.\n"
+            "- Do NOT call the book_appointment tool if the name, phone number, or time is missing. Instead, respond directly in conversation to ask the caller for them.\n"
             "- Do NOT tell the user their appointment is booked or scheduled until the book_appointment tool has been executed and returned a success message.\n"
         )
         
@@ -710,6 +745,7 @@ async def entrypoint(ctx: JobContext):
         "- You MUST call the take_message tool to record a message when the caller wants to leave a message, note, or when the user is unavailable.\n"
         "- You are strictly FORBIDDEN from calling the take_message tool or saying you will pass on the message/note/goodbye unless you have first collected the caller's Name, Phone Number, and their detailed message.\n"
         "- If the caller's Name, Phone Number, or detailed message is missing, you MUST ask the caller for them first.\n"
+        "- Do NOT call the take_message tool if the caller's name, phone number, or detailed message is missing or placeholders. Instead, respond directly in conversation to ask the caller for the missing information.\n"
         "- If the caller asks you to 'call me back' or leave a call back note, you MUST ask them: 'What is the best phone number for Shadikur to call you back at?' and you are FORBIDDEN from using placeholders or saying goodbye without asking for their specific digits-based callback phone number first.\n"
         "- Do NOT tell the caller that you will pass on their message, leave a note, or say goodbye until the take_message tool has been executed and returned a success message.\n"
         "- Do NOT call the take_message tool with placeholder values like 'Unknown', 'Unknown Caller', 'Not Provided', 'Your Phone Number', 'web-sandbox', or 'None'.\n"
