@@ -191,7 +191,7 @@ class FilteredAgent(Agent):
                             cleaned_chunk += char
                 if cleaned_chunk:
                     yield cleaned_chunk
-                
+
         return super().tts_node(filtered_text_generator(), model_settings)
 
     def llm_node(
@@ -232,6 +232,95 @@ class FilteredAgent(Agent):
         if last_user_msg and is_identity_question(last_user_msg):
             logging.info(f"Identity question detected: '{last_user_msg}'. Temporarily clearing tools to prevent hallucinated tool calls.")
             active_tools = []
+            
+        # Prevent tool call loops on validation errors (e.g. missing phone/email)
+        disabled_tools = set()
+        last_tool_outputs = {}
+        for item in cleaned_items:
+            item_type = getattr(item, "type", None)
+            if item_type == "function_call_output":
+                t_name = getattr(item, "name", None)
+                t_out = getattr(item, "output", None)
+                if t_name and t_out:
+                    last_tool_outputs[t_name] = str(t_out)
+                    
+        # Check if the user has provided updates in the latest user message
+        has_new_phone = False
+        has_new_email = False
+        if last_user_msg:
+            if re.search(r'\d{3,}', last_user_msg):
+                has_new_phone = True
+            if re.search(r'[\w\.-]+@[\w\.-]+\.\w+', last_user_msg):
+                has_new_email = True
+                
+        # Disable tool if the last execution returned a validation error and no updates were received
+        for t_name, t_out in last_tool_outputs.items():
+            if "error" in t_out.lower() or "cannot" in t_out.lower():
+                if t_name in ("take_message", "book_appointment", "cancel_appointment"):
+                    if "phone" in t_out.lower() and not has_new_phone:
+                        logging.info(f"Disabling tool '{t_name}' due to validation error (missing phone) and no updates in user response.")
+                        disabled_tools.add(t_name)
+                elif t_name == "create_support_ticket":
+                    if "email" in t_out.lower() and not has_new_email:
+                        logging.info(f"Disabling tool '{t_name}' due to validation error (missing email) and no updates in user response.")
+                        disabled_tools.add(t_name)
+                    elif "phone" in t_out.lower() and not has_new_phone:
+                        logging.info(f"Disabling tool '{t_name}' due to validation error (missing phone) and no updates in user response.")
+                        disabled_tools.add(t_name)
+                # CRITICAL: If transfer_call just returned an error, disable it for this turn.
+                # This prevents the LLM from retrying with a guessed/hallucinated extension number.
+                elif t_name == "transfer_call":
+                    logging.info("Disabling 'transfer_call' for this turn: last attempt returned an error. Preventing hallucinated retry.")
+                    disabled_tools.add("transfer_call")
+                        
+        if disabled_tools:
+            active_tools = [t for t in active_tools if t.info.name not in disabled_tools]
+
+        # TRANSFER CONFIRMATION GATE
+        # The LLM must NOT call transfer_call unless the caller has explicitly confirmed they
+        # want to be transferred. Gate this at the code level to prevent hallucinated transfers
+        # triggered by ambiguous questions like "Can I speak to Edel?".
+        transfer_confirmation_keywords = [
+            # English
+            "yes", "sure", "please", "go ahead", "transfer", "connect me", "put me through",
+            "yes please", "ok", "okay", "yeah",
+            # Spanish
+            "sí", "si", "por favor", "claro", "adelante", "transfiera", "conéctame",
+            # German
+            "ja", "bitte", "weiterleiten", "verbinden"
+        ]
+        if last_user_msg and any(t.info.name == "transfer_call" for t in active_tools):
+            msg_lower = last_user_msg.lower()
+            has_transfer_confirmation = any(kw in msg_lower for kw in transfer_confirmation_keywords)
+            if not has_transfer_confirmation:
+                logging.info(
+                    f"Transfer confirmation gate: blocking 'transfer_call' — "
+                    f"no explicit confirmation found in: '{last_user_msg}'"
+                )
+                active_tools = [t for t in active_tools if t.info.name != "transfer_call"]
+
+        # Detect if this turn is responding to a tool result — if so, increase num_predict
+        # so the LLM has enough tokens to generate a spoken follow-up (avoids silent hangup).
+        last_item_is_tool_result = (
+            cleaned_items
+            and getattr(cleaned_items[-1], "type", None) == "function_call_output"
+        )
+        effective_model_settings = model_settings
+        if last_item_is_tool_result:
+            logging.info("Last context item is a tool result — increasing num_predict to 200 for follow-up response.")
+            try:
+                # model_settings may be a dataclass/object; try to copy and patch it
+                import copy
+                effective_model_settings = copy.copy(model_settings)
+                # Patch extra_body options if accessible
+                if hasattr(effective_model_settings, "extra_body") and isinstance(effective_model_settings.extra_body, dict):
+                    eb = copy.deepcopy(effective_model_settings.extra_body)
+                    eb.setdefault("options", {})
+                    eb["options"]["num_predict"] = 200
+                    effective_model_settings.extra_body = eb
+            except Exception as ms_err:
+                logging.warning(f"Could not patch model_settings num_predict: {ms_err}")
+                effective_model_settings = model_settings
         
         # Log LLM inputs to debug raw JSON leaks or context issues
         logging.info("--- LLM Node Input ChatContext ---")
@@ -243,7 +332,7 @@ class FilteredAgent(Agent):
         logging.info(f"Tools available: {[t.info.name for t in active_tools]}")
         logging.info("----------------------------------")
         
-        return super().llm_node(cleaned_ctx, active_tools, model_settings)
+        return super().llm_node(cleaned_ctx, active_tools, effective_model_settings)
 
 
 class AppointmentTools:
@@ -343,7 +432,7 @@ class AppointmentTools:
         if not clean_ext or len(clean_ext) < 2:
             return (
                 f"Error: '{extension}' is not a valid extension. Extensions must be numeric digits (e.g., '100', '101', '502'). "
-                "You are strictly forbidden from transferring to names like 'Synthia' or 'Shadikur'. Please politely explain this to the caller."
+                "You are strictly forbidden from transferring to contact names or assistant names. You must transfer using numeric digits. Please politely explain this to the caller."
             )
         
         # Find the SIP participant in the room and resolve host
@@ -533,6 +622,132 @@ class AppointmentTools:
             
         return "Success: The message has been recorded and sent to the user."
 
+    @llm.function_tool
+    async def create_support_ticket(
+        self,
+        subject: str,
+        name: str,
+        email: str,
+        message: str,
+        department: str = "4",
+        priority: str = "2"
+    ) -> str:
+        """Create a support ticket in the CRM.
+
+        STRICT RULES — you MUST follow all of these before calling this tool:
+        1. The caller must have EXPLICITLY asked to 'create a ticket', 'submit a ticket',
+           'report an issue' as a formal request — NOT just mentioning a problem in passing.
+        2. You MUST have collected ALL of the following DIRECTLY from the caller in this
+           conversation (do NOT assume, invent, or reuse values from previous turns):
+           - Their full name (caller said it themselves)
+           - A valid email address (caller said it themselves)
+           - A clear subject/summary
+           - A detailed description of the issue
+        3. If ANY detail is missing, ask the caller for it first. Do NOT call this tool
+           with placeholder, assumed, or hallucinated values.
+
+        Args:
+            subject: Short summary of the ticket (from caller).
+            name: The caller's full name as they stated it.
+            email: The caller's email address as they stated it.
+            message: Detailed description of the issue (from caller).
+            department: Department ID ('1'=Admin, '4'=Tech Support, '5'=Quotation). Default '4'.
+            priority: Priority level ('1'=Low, '2'=Medium, '3'=High). Default '2'.
+        """
+        subject = (subject or "").strip()
+        name = (name or "").strip()
+        email = (email or "").strip()
+        message = (message or "").strip()
+        department = (department or "4").strip()
+        priority = (priority or "2").strip()
+
+        missing = []
+        is_name_placeholder = not name or any(p in name.lower() for p in ["unknown", "not provided", "placeholder", "undefined", "null", "none", "your", "name", "caller", "user"])
+        is_email_placeholder = not email or "@" not in email or "." not in email or any(p in email.lower() for p in ["unknown", "placeholder", "undefined", "null", "none", "your", "email"])
+        is_subject_placeholder = not subject or any(p in subject.lower() for p in ["unknown", "placeholder", "undefined", "null", "none", "your", "subject"])
+        is_message_placeholder = not message or len(message) < 5 or any(p in message.lower() for p in ["unknown", "placeholder", "undefined", "null", "none", "your", "message"])
+
+        if is_name_placeholder:
+            missing.append("your name")
+        if is_email_placeholder:
+            missing.append("valid email address")
+        if is_subject_placeholder:
+            missing.append("ticket subject")
+        if is_message_placeholder:
+            missing.append("detailed description of the issue")
+
+        if missing:
+            return (
+                f"Error: Cannot create ticket. The following details are missing, invalid, or placeholders: {', '.join(missing)}. "
+                "Please politely ask the caller for these missing details before submitting the ticket."
+            )
+
+        form_url = "https://mis.compusource.net/forms/ticket?styled=1&with_logo=1"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+        }
+        
+        try:
+            async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=15.0) as client:
+                logging.info("create_support_ticket: Fetching CSRF token from CRM...")
+                resp = await client.get(form_url)
+                if resp.status_code != 200:
+                    return f"Error: Failed to reach the CRM ticket form (Status: {resp.status_code})."
+                
+                # Extract CSRF token
+                match = re.search(r'name="csrf_token_name"\s+value="([a-f0-9]+)"', resp.text)
+                if not match:
+                    match = re.search(r'value="([a-f0-9]+)"\s+name="csrf_token_name"', resp.text)
+                if not match:
+                    return "Error: Failed to parse security verification token from the ticket portal."
+                
+                csrf_token = match.group(1)
+                
+                # Prepare payload
+                data = {
+                    "csrf_token_name": csrf_token,
+                    "subject": subject,
+                    "name": name,
+                    "email": email,
+                    "department": department,
+                    "priority": priority,
+                    "message": message
+                }
+                
+                # We must send it as multipart/form-data to succeed, so we use files parameter
+                files = {
+                    "attachments[]": ("", b"", "application/octet-stream")
+                }
+                
+                post_headers = {
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": form_url
+                }
+                
+                logging.info(f"create_support_ticket: Submitting ticket POST for {name} ({email})...")
+                post_resp = await client.post(form_url, data=data, files=files, headers=post_headers)
+                
+                if post_resp.status_code == 200:
+                    try:
+                        res_json = post_resp.json()
+                        if res_json.get("success") is True:
+                            msg = res_json.get("message", "Ticket submitted successfully.")
+                            return f"Success! {msg}"
+                        else:
+                            err_msg = res_json.get("message", "Unknown error returned by CRM.")
+                            return f"Error from ticket portal: {err_msg}"
+                    except Exception:
+                        if "success" in post_resp.text.lower() or "thank you" in post_resp.text.lower():
+                            return "Success! Support ticket has been created in the CRM."
+                        return f"Error: Received unexpected response format from CRM: {post_resp.text[:200]}"
+                else:
+                    return f"Error: Failed to submit ticket. HTTP status: {post_resp.status_code}"
+                    
+        except Exception as e:
+            logging.error(f"Error creating support ticket: {e}")
+            return f"Error: Failed to process ticket submission due to connection error: {str(e)}"
+
 
 
 
@@ -563,19 +778,77 @@ async def entrypoint(ctx: JobContext):
             sample_rate = 16000
             frame_duration = 0.02
             num_samples = int(sample_rate * frame_duration)
-            amplitude = 40.0  # Soft hum
-            state = 0.0
             
+            # Synthetic Call Center Ambient Synthesizer
+            hum_state = 0.0
+            num_chatter_sources = 6
+            import random
+            phases = [random.uniform(0, 2*np.pi) for _ in range(num_chatter_sources)]
+            freqs = [random.uniform(90.0, 220.0) for _ in range(num_chatter_sources)]
+            amps = [random.uniform(2.0, 5.0) for _ in range(num_chatter_sources)]
+            
+            click_decay = 0.985
+            click_state = 0.0
+            click_freq = 1800.0
+            click_phase = 0.0
+            
+            ring_cycle_samples = 12 * sample_rate
+            ring_phase1 = 0.0
+            ring_phase2 = 0.0
+            
+            sample_idx = 0
             try:
                 while True:
-                    samples = np.zeros(num_samples, dtype=np.int16)
-                    for i in range(num_samples):
-                        white = np.random.uniform(-1.0, 1.0)
-                        state = 0.9 * state + 0.1 * white
-                        samples[i] = int(state * amplitude)
+                    samples = np.zeros(num_samples, dtype=np.float32)
                     
+                    # Slowly drift the chatter frequencies/amplitudes once per frame (dynamic human murmur effect)
+                    for j in range(num_chatter_sources):
+                        freqs[j] = np.clip(freqs[j] + random.uniform(-2.0, 2.0), 80.0, 250.0)
+                        amps[j] = np.clip(amps[j] + random.uniform(-0.2, 0.2), 1.0, 6.0)
+                        
+                    for i in range(num_samples):
+                        # 1. Base hum (deep ventilation background hum)
+                        white = np.random.uniform(-1.0, 1.0)
+                        hum_state = 0.995 * hum_state + 0.005 * white
+                        val = hum_state * 20.0
+                        
+                        # 2. Quiet murmurs (distant voice chatter)
+                        chatter_val = 0.0
+                        for j in range(num_chatter_sources):
+                            phases[j] += 2 * np.pi * freqs[j] / sample_rate
+                            chatter_val += np.sin(phases[j]) * amps[j]
+                        val += chatter_val
+                        
+                        # 3. Dynamic keyboard clicks (quiet typing in the background)
+                        if random.random() < 0.0008:
+                            click_state = random.uniform(5.0, 12.0)
+                            click_freq = random.uniform(1400.0, 2200.0)
+                            
+                        if click_state > 0.1:
+                            click_phase += 2 * np.pi * click_freq / sample_rate
+                            val += np.sin(click_phase) * click_state
+                            click_state *= click_decay
+                            
+                        # 4. Distant telephone ring cadences (low-amplitude ring once every 12 seconds)
+                        ring_idx = sample_idx % ring_cycle_samples
+                        in_ring = False
+                        if 0 <= ring_idx < int(1.2 * sample_rate): # First ring (1.2s duration)
+                            in_ring = True
+                        elif int(2.0 * sample_rate) <= ring_idx < int(3.2 * sample_rate): # Second ring (1.2s duration)
+                            in_ring = True
+                            
+                        if in_ring:
+                            ring_phase1 += 2 * np.pi * 853.0 / sample_rate
+                            ring_phase2 += 2 * np.pi * 960.0 / sample_rate
+                            val += (np.sin(ring_phase1) + np.sin(ring_phase2)) * 0.8
+                            
+                        samples[i] = val
+                        sample_idx += 1
+                        
+                    # Normalize and convert to 16-bit PCM
+                    int_samples = np.clip(samples, -32768, 32767).astype(np.int16)
                     frame = rtc.AudioFrame(
-                        data=samples.tobytes(),
+                        data=int_samples.tobytes(),
                         sample_rate=sample_rate,
                         num_channels=1,
                         samples_per_channel=num_samples
@@ -637,9 +910,15 @@ async def entrypoint(ctx: JobContext):
                 
     logging.info(f"Resolved extension routing to: {extension}")
     
+    caller_phone = "web-sandbox"
+    for identity, p in ctx.room.remote_participants.items():
+        if "sip.phoneNumber" in p.attributes:
+            caller_phone = p.attributes["sip.phoneNumber"]
+            break
+
     client = AsyncIOMotorClient("mongodb://127.0.0.1:27017")
     db = client["voice_agent"]
-    
+
     business = await db["businesses"].find_one({"extension": extension})
     if business:
         logging.info(f"Dynamically loading profile for business: {business['name']}")
@@ -648,43 +927,94 @@ async def entrypoint(ctx: JobContext):
         voice_model = business.get("voice", "af_bella")
         skills = business.get("skills", ["appointments"])
         business_id = business["_id"]
-        
-        # Extract starting greeting from the raw prompt first
-        greeting_text = extract_greeting(db_prompt, agent_name)
-        
-        # Clean conflicting instructions and goodbye endings from custom prompt
-        sanitized_prompt = db_prompt.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
-        sanitized_prompt = re.sub(r'(?i)##\s+Ending\s+the\s+Call\b.*', '', sanitized_prompt, flags=re.DOTALL)
-        sanitized_prompt = re.sub(r'(?i)After\s+collecting\s+the\s+message,\s*say\s*:\s*\n*\s*"[^"]*"', '', sanitized_prompt)
-        sanitized_prompt = re.sub(r'(?i)After\s+collecting\s+the\s+message,\s*say\s*:\s*\n*\s*\'[^\']*\'', '', sanitized_prompt)
-        sanitized_prompt = sanitized_prompt.replace('"Thank you for calling. I\'ll pass on your message."', '')
-        sanitized_prompt = sanitized_prompt.replace('"Thank you. I\'ll pass your message to Shadikur."', '')
-        sanitized_prompt = sanitized_prompt.replace('"Thank you. Have a nice day."', '')
-        
-        # Prepend critical overriding rules
-        agent_prompt = (
-            "CRITICAL PROTOCOL (ABSOLUTE PRECEDENCE OVER ALL OTHER RULES):\n"
-            "1. You are strictly FORBIDDEN from ending the call, saying goodbye, or promising to pass on a message/note/callback "
-            "unless you have first successfully executed the 'take_message' tool and it has returned a success message.\n"
-            "2. If the caller asks for a callback, to be called back, or to leave a message, you MUST ask them for their name "
-            "and their digit-based phone number. You must ask: 'What is the best phone number for Shadikur to call you back at?' "
-            "if they ask for a callback.\n"
-            "3. You are strictly FORBIDDEN from fabricating, guessing, or making up any names, phone numbers, or details that were not explicitly spoken by the caller. "
-            "If the caller has not explicitly spoken their phone number, you DO NOT have it, and you MUST ask them for it first before calling any tool.\n"
-            "4. If the caller asks 'Who are you?', 'What is your name?', or similar identity questions, you MUST directly answer who you are (e.g. 'I'm Shadikur's phone assistant Synthia') "
-            "and do NOT call any tools or take a message in that turn.\n\n"
-        ) + sanitized_prompt
     else:
         logging.warning(f"No registered business found for extension {extension}. Falling back to default.")
         agent_name = "Gravity"
-        agent_prompt = (
+        db_prompt = (
             "You are 'Gravity', a professional real-time voice receptionist for Compusource. "
             "Keep answers very short, concise, and natural (one or two sentences)."
         )
         voice_model = "af_bella"
         skills = ["appointments"]
         business_id = ObjectId("6659f13ba97312fba0a91e5c")
-        greeting_text = extract_greeting(agent_prompt, agent_name)
+        
+    # Look up caller history memory in MongoDB, filtering by business_id to support multi-tenancy
+    memory_context = ""
+    if caller_phone and caller_phone != "web-sandbox":
+        logging.info(f"Looking up caller history for phone number: {caller_phone} under business: {agent_name} ({business_id})")
+        try:
+            past_calls = await db["calls"].find({
+                "business_id": business_id,
+                "phone_number": caller_phone,
+                "status": "completed"
+            }).sort("start_time", -1).to_list(length=2)
+            
+            if past_calls:
+                memory_context = "\n\nCALLER HISTORY MEMORY (MongoDB):\n"
+                memory_context += f"The caller from phone/extension '{caller_phone}' has called before. Details of recent interactions:\n"
+                for pc in past_calls:
+                    time_str = pc.get("start_time", "Unknown Date")
+                    readable_time = time_str
+                    try:
+                        dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+                        readable_time = dt.strftime("%Y-%m-%d %H:%M UTC")
+                    except Exception:
+                        pass
+                    summary = pc.get("summary")
+                    if not summary:
+                        # Fallback heuristic if summary is missing
+                        transcript = pc.get("transcript", [])
+                        caller_name = "unknown"
+                        for turn in transcript:
+                            if turn["role"] == "user" and "this is" in turn["text"].lower():
+                                m = re.search(r'(?i)this is\s+([A-Za-z]+)', turn["text"])
+                                if m:
+                                    caller_name = m.group(1)
+                                    break
+                        summary = f"Call transcript indicates caller name is likely '{caller_name}'."
+                    memory_context += f"- Call on {readable_time}: {summary}\n"
+                memory_context += (
+                    "Use this memory context to greet them familiarly (e.g. 'Welcome back!') "
+                    "and follow up on their previous issue if they are calling about the same thing. "
+                    "Do NOT assume the caller's name is the same as any employee, contact, or user name mentioned in the instructions or history. "
+                    "Never call the caller by a name unless they explicitly confirmed their identity or the history explicitly confirms their caller name. "
+                    "If you need to confirm their identity, ask: 'Am I speaking with [Name]?' rather than assuming. "
+                    "You do not need to ask for their name or phone number if they are already clearly identified in the memory transcript or summary. "
+                    "Confirm the callback number if needed, but do not ask for it from scratch if already known."
+                )
+        except Exception as db_err:
+            logging.error(f"Error looking up caller memory: {db_err}")
+
+    # Extract starting greeting from the raw prompt first
+    greeting_text = extract_greeting(db_prompt, agent_name)
+    
+    # Clean conflicting instructions and goodbye endings from custom prompt
+    sanitized_prompt = db_prompt.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    sanitized_prompt = re.sub(r'(?i)##\s+Ending\s+the\s+Call\b.*', '', sanitized_prompt, flags=re.DOTALL)
+    sanitized_prompt = re.sub(r'(?i)After\s+collecting\s+the\s+message,\s*say\s*:\s*\n*\s*"[^"]*"', '', sanitized_prompt)
+    sanitized_prompt = re.sub(r'(?i)After\s+collecting\s+the\s+message,\s*say\s*:\s*\n*\s*\'[^\']*\'', '', sanitized_prompt)
+    sanitized_prompt = re.sub(r'(?i)"Thank you for calling\.\s+I\'ll\s+pass\s+on\s+your\s+message\."', '', sanitized_prompt)
+    sanitized_prompt = re.sub(r'(?i)"Thank you\.\s+I\'ll\s+pass\s+your\s+message\s+to\s+[^"]+"\.', '', sanitized_prompt)
+    sanitized_prompt = re.sub(r'(?i)"Thank you\.\s+Have\s+a\s+nice\s+day\."', '', sanitized_prompt)
+    sanitized_prompt = re.sub(r'(?i)\'Thank you for calling\.\s+I\'ll\s+pass\s+on\s+your\s+message\.\'', '', sanitized_prompt)
+    sanitized_prompt = re.sub(r'(?i)\'Thank you\.\s+I\'ll\s+pass\s+your\s+message\s+to\s+[^\']+\.\'', '', sanitized_prompt)
+    sanitized_prompt = re.sub(r'(?i)\'Thank you\.\s+Have\s+a\s+nice\s+day\.\'', '', sanitized_prompt)
+    # Prepend critical overriding rules
+    agent_prompt = (
+        "CRITICAL PROTOCOL (ABSOLUTE PRECEDENCE OVER ALL OTHER RULES):\n"
+        "1. You are strictly FORBIDDEN from ending the call, saying goodbye, or promising to pass on a message/note/callback "
+        "unless you have first successfully executed the 'take_message' tool and it has returned a success message.\n"
+        "2. If the caller asks for a callback, to be called back, or to leave a message, you MUST ask them for their name "
+        "and their digit-based phone number. You must ask: 'What is the best phone number to call you back at?' "
+        "if they ask for a callback.\n"
+        "3. You are strictly FORBIDDEN from fabricating, guessing, or making up any names, phone numbers, or details that were not explicitly spoken by the caller. "
+        "If the caller has not explicitly spoken their name or phone number, you DO NOT have it. You must NEVER assume or guess the caller's name or details from the business instructions or context.\n"
+        "4. If the caller asks 'Who are you?', 'What is your name?', or similar identity questions, you MUST directly answer who you are based on your custom instructions (e.g. state your name and role as defined in your instructions) "
+        "and do NOT call any tools or take a message in that turn.\n\n"
+    ) + sanitized_prompt
+    
+    if memory_context:
+        agent_prompt += memory_context
     voice_lower = voice_model.lower()
     if voice_lower.startswith("de") or voice_lower == "german":
         if greeting_text.startswith("Hello! Thank you for calling"):
@@ -708,10 +1038,18 @@ async def entrypoint(ctx: JobContext):
         "2. Only output the direct words you would speak to the caller.\n"
         "3. Keep answers very short, concise, and natural (one or two sentences).\n"
         "4. You are strictly FORBIDDEN from inventing, hallucinating, or disclosing details (such as prices, services, policies, guarantees, employee names, or specific business options) that are NOT explicitly mentioned in your custom instructions. If the caller asks for information not present in your instructions, you must politely state that you do not have that information and offer to connect them or take a message.\n"
+        "5. CRITICAL: After ANY tool call returns a result (success OR error), you MUST immediately speak a short spoken response to the caller acknowledging the outcome. You are STRICTLY FORBIDDEN from remaining silent after a tool result. For example, after a ticket is created say: 'Your support ticket has been submitted successfully. Is there anything else I can help you with?' You MUST always follow a tool result with a spoken reply.\n"
     )
 
     prompt_lower = agent_prompt.lower()
-    if "transfer" in prompt_lower or "extension" in prompt_lower:
+    # Enable transfer capability ONLY when the prompt explicitly mentions 'transfer' AND includes
+    # a numeric extension destination (e.g. 'extension 101', 'transfer to 200').
+    # A bare mention of 'extension' in a business name or description does NOT activate this.
+    has_transfer_config = bool(
+        re.search(r'transfer', prompt_lower)
+        and re.search(r'(?:extension|ext\.?)\s*\d+|transfer\s+(?:to\s+)?\d+', prompt_lower)
+    )
+    if has_transfer_config:
         agent_prompt += (
             "4. You have the ability to transfer calls to internal extensions using the transfer_call tool. "
             "If the user asks to be transferred or speak to a human, you must first ask for their confirmation "
@@ -731,6 +1069,19 @@ async def entrypoint(ctx: JobContext):
             "- Do NOT tell the user their appointment is booked or scheduled until the book_appointment tool has been executed and returned a success message.\n"
         )
         
+    if "tickets" in skills:
+        agent_prompt += (
+            "\n\nSupport Ticket CRM Rules:\n"
+            "- You have the ability to create a support ticket in the CRM using the 'create_support_ticket' tool. "
+            "You are strictly FORBIDDEN from calling this tool or offering to create a ticket unless the caller explicitly requests to file a ticket, open a ticket, or submit a support request. "
+            "Do NOT assume the caller wants a ticket filed just because they report a problem; instead, first ask them: 'Would you like me to open a support ticket for you?' or wait until they explicitly ask to open a ticket.\n"
+            "- If they confirm they want a ticket created, you MUST collect the caller's Name, Email Address, Subject of the issue, and detailed Message/description of the problem before submitting it.\n"
+            "- If any of these details (Name, Email, Subject, or Message) are missing, you MUST ask the caller for them first. Ask politely and clearly.\n"
+            "- Do NOT call the create_support_ticket tool if any of those details are missing. Instead, ask the user for them in conversation.\n"
+            "- Do NOT tell the caller that their ticket is created/submitted until the create_support_ticket tool has been executed and returned a success message.\n"
+            "- By default, use department '4' (Tech Support) for all technical support tickets, and priority '2' (Medium), unless the caller specifies otherwise.\n"
+        )
+        
     # Unconditionally include message taking rules
     agent_prompt += (
         "\n\nMessage Taking Rules:\n"
@@ -738,7 +1089,7 @@ async def entrypoint(ctx: JobContext):
         "- You are strictly FORBIDDEN from calling the take_message tool or saying you will pass on the message/note/goodbye unless you have first collected the caller's Name, Phone Number, and their detailed message.\n"
         "- If the caller's Name, Phone Number, or detailed message is missing, you MUST ask the caller for them first.\n"
         "- Do NOT call the take_message tool if the caller's name, phone number, or detailed message is missing or placeholders. Instead, respond directly in conversation to ask the caller for the missing information.\n"
-        "- If the caller asks you to 'call me back' or leave a call back note, you MUST ask them: 'What is the best phone number for Shadikur to call you back at?' and you are FORBIDDEN from using placeholders or saying goodbye without asking for their specific digits-based callback phone number first.\n"
+        "- If the caller asks you to 'call me back' or leave a call back note, you MUST ask them: 'What is the best phone number to call you back at?' and you are FORBIDDEN from using placeholders or saying goodbye without asking for their specific digits-based callback phone number first.\n"
         "- Do NOT tell the caller that you will pass on their message, leave a note, or say goodbye until the take_message tool has been executed and returned a success message.\n"
         "- Do NOT call the take_message tool with placeholder values like 'Unknown', 'Unknown Caller', 'Not Provided', 'Your Phone Number', 'web-sandbox', or 'None'.\n"
     )
@@ -787,8 +1138,13 @@ async def entrypoint(ctx: JobContext):
         _strict_tool_schema=False,
         extra_body={
             "options": {
-                "num_ctx": 2048,
-                "num_predict": 100
+                # 6000 tokens: comfortably fits system prompt (~300 tok) + tool
+                # definitions (~600 tok) + a full multi-tool conversation (~4000 tok).
+                # 3072 was too small and caused context truncation mid-call.
+                # 8192 added ~3s prefill overhead per turn — 6000 is the balance.
+                "num_ctx": 6000,
+                "num_predict": 120,
+                "keep_alive": -1
             }
         }
     )
@@ -848,8 +1204,16 @@ async def entrypoint(ctx: JobContext):
         # Include appointment tools
         tools_list.extend([t for t in all_tools if t.info.name in ["check_availability", "book_appointment", "cancel_appointment"]])
         
-    # Expose call transfer ONLY if the custom prompt explicitly mentions transfer / extension
-    if "transfer" in prompt_lower or "extension" in prompt_lower:
+    if "tickets" in skills:
+        # Include support ticket tools
+        ticket_tool = next((t for t in all_tools if t.info.name == "create_support_ticket"), None)
+        if ticket_tool:
+            tools_list.append(ticket_tool)
+        
+    # Expose call transfer ONLY if the prompt explicitly defines a transfer destination (numeric extension).
+    # This prevents the tool from being available on agents where transfer is not configured,
+    # which would cause the LLM to hallucinate extension numbers.
+    if has_transfer_config:
         transfer_tool = next((t for t in all_tools if t.info.name == "transfer_call"), None)
         if transfer_tool:
             tools_list.append(transfer_tool)
@@ -885,21 +1249,17 @@ async def entrypoint(ctx: JobContext):
         "extension": extension,
         "business_id": business_id,
         "business_name": agent_name,
-        "phone_number": "web-sandbox",
+        "phone_number": caller_phone,
         "start_time": datetime.utcnow().isoformat(),
         "end_time": None,
         "duration_seconds": 0.0,
         "status": "active",
         "transcript": []
     }
-    
-    for identity, p in ctx.room.remote_participants.items():
-        if "sip.phoneNumber" in p.attributes:
-            call_record["phone_number"] = p.attributes["sip.phoneNumber"]
-            break
             
-    await db["calls"].insert_one(call_record)
-    logging.info(f"Initialized live call record in MongoDB for room {ctx.room.name}")
+    call_record_result = await db["calls"].insert_one(call_record)
+    call_id = call_record_result.inserted_id
+    logging.info(f"Initialized live call record in MongoDB for room {ctx.room.name} (id: {call_id}, business: {agent_name})")
     
     # Instantiate the AgentSession container
     session = AgentSession(
@@ -914,8 +1274,8 @@ async def entrypoint(ctx: JobContext):
 
     async def save_to_mongo(dialog):
         try:
-            await db["calls"].update_many(
-                {"room_name": ctx.room.name, "status": "active"},
+            await db["calls"].update_one(
+                {"_id": call_id, "business_id": business_id},
                 {"$push": {"transcript": dialog}}
             )
         except Exception as e:
@@ -992,38 +1352,8 @@ async def entrypoint(ctx: JobContext):
             logging.info("Room empty. Shutting down worker...")
             ctx.shutdown()
             
-    async def send_teams_summary(webhook_url: str, transcript: list, duration_seconds: float):
+    async def send_teams_summary(webhook_url: str, summary_text: str, duration_seconds: float):
         try:
-            if not transcript:
-                summary_text = "No conversation recorded (call was disconnected immediately)."
-            else:
-                # Format transcript for LLM
-                formatted_transcript = ""
-                for turn in transcript:
-                    role_name = "Caller" if turn["role"] == "user" else "AI Assistant"
-                    formatted_transcript += f"{role_name}: {turn['text']}\n"
-                
-                summary_prompt = (
-                    "You are a helpful assistant. Below is the transcript of a voice call. "
-                    "Provide a concise summary of the call (2-3 sentences), highlighting any actions taken (e.g. appointments booked or cancelled, or main user inquiry). "
-                    "Do not output anything else but the summary."
-                )
-                
-                from livekit.agents.llm import ChatContext
-                chat_ctx = ChatContext()
-                chat_ctx.add_message(role="system", content=summary_prompt)
-                chat_ctx.add_message(role="user", content=f"Call Transcript:\n{formatted_transcript}")
-                
-                logging.info("Requesting call summary from Ollama...")
-                chunks = []
-                async with llm_model.chat(chat_ctx=chat_ctx) as stream:
-                    async for chunk in stream:
-                        if chunk.delta and chunk.delta.content:
-                            chunks.append(chunk.delta.content)
-                summary_text = "".join(chunks).strip()
-            
-            logging.info(f"Generated summary: {summary_text}")
-            
             # Send to Microsoft Teams via Webhook (MessageCard format)
             duration_mins = int(duration_seconds // 60)
             duration_secs = int(duration_seconds % 60)
@@ -1061,7 +1391,7 @@ async def entrypoint(ctx: JobContext):
                 else:
                     logging.info("Successfully posted call summary to Microsoft Teams.")
         except Exception as ex:
-            logging.error(f"Failed to generate or send Teams summary: {ex}")
+            logging.error(f"Failed to send Teams summary: {ex}")
 
     async def close_call_record():
         try:
@@ -1069,26 +1399,59 @@ async def entrypoint(ctx: JobContext):
             start_time_parsed = datetime.fromisoformat(call_record["start_time"])
             duration = (end_time - start_time_parsed).total_seconds()
             
-            # Fetch the updated transcript from the DB
-            updated_call = await db["calls"].find_one({"room_name": ctx.room.name})
+            # Fetch the updated transcript from the DB — pinned by exact call _id and business_id
+            updated_call = await db["calls"].find_one({"_id": call_id, "business_id": business_id})
             transcript = updated_call.get("transcript", []) if updated_call else []
             
-            await db["calls"].update_many(
-                {"room_name": ctx.room.name, "status": "active"},
-                {"$set": {
-                    "end_time": end_time.isoformat(),
-                    "duration_seconds": duration,
-                    "status": "completed"
-                }}
+            summary_text = None
+            if transcript:
+                # Format transcript for LLM
+                formatted_transcript = ""
+                for turn in transcript:
+                    role_name = "Caller" if turn["role"] == "user" else "AI Assistant"
+                    formatted_transcript += f"{role_name}: {turn['text']}\n"
+                
+                summary_prompt = (
+                    "You are a helpful assistant. Below is the transcript of a voice call. "
+                    "Provide a concise summary of the call (2-3 sentences), highlighting any actions taken (e.g. appointments booked or cancelled, or main user inquiry). "
+                    "Do not output anything else but the summary."
+                )
+                
+                from livekit.agents.llm import ChatContext
+                chat_ctx = ChatContext()
+                chat_ctx.add_message(role="system", content=summary_prompt)
+                chat_ctx.add_message(role="user", content=f"Call Transcript:\n{formatted_transcript}")
+                
+                logging.info("Requesting call summary from Ollama for database archiving...")
+                chunks = []
+                async with llm_model.chat(chat_ctx=chat_ctx) as stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+                summary_text = "".join(chunks).strip()
+            else:
+                summary_text = "No conversation recorded (call was disconnected immediately)."
+            
+            update_fields = {
+                "end_time": end_time.isoformat(),
+                "duration_seconds": duration,
+                "status": "completed"
+            }
+            if summary_text:
+                update_fields["summary"] = summary_text
+                
+            await db["calls"].update_one(
+                {"_id": call_id, "business_id": business_id},
+                {"$set": update_fields}
             )
-            logging.info(f"Archived call history in MongoDB for room {ctx.room.name}. Duration: {duration}s")
+            logging.info(f"Archived call for [{agent_name}] room {ctx.room.name} (id: {call_id}). Duration: {duration}s")
             
             # Trigger Teams Webhook if configured
             latest_biz = await db["businesses"].find_one({"_id": business_id})
-            if latest_biz and latest_biz.get("teams_webhook_url"):
+            if latest_biz and latest_biz.get("teams_webhook_url") and summary_text:
                 webhook_url = latest_biz["teams_webhook_url"]
                 logging.info(f"Teams webhook configured: {webhook_url}. Sending summary post...")
-                await send_teams_summary(webhook_url, transcript, duration)
+                await send_teams_summary(webhook_url, summary_text, duration)
         except Exception as e:
             logging.error(f"Error archiving call: {e}")
         

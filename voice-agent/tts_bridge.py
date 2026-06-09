@@ -40,6 +40,22 @@ async def startup_event():
 
     asyncio.create_task(periodic_sip_sync())
 
+    # Pre-warm the connection to Kokoro TTS so the first real call has no TCP setup cost
+    async def _warmup_kokoro():
+        await asyncio.sleep(5)  # Give Kokoro a moment to be ready after service start
+        for attempt in range(12):  # Try for up to ~60s
+            try:
+                r = await http_client.get("http://127.0.0.1:8880/health", timeout=5.0)
+                if r.status_code < 500:
+                    logger.info("✅ Kokoro TTS pre-warmed and ready")
+                    return
+            except Exception:
+                pass
+            await asyncio.sleep(5)
+        logger.warning("Kokoro TTS warmup timed out — it may still be loading")
+
+    asyncio.create_task(_warmup_kokoro())
+
 # Enable CORS for frontend communication
 app.add_middleware(
     CORSMiddleware,
@@ -376,17 +392,13 @@ async def text_to_speech(request: Request):
     # Check if we should use gTTS or Kokoro
     use_gtts = False
     gtts_lang = "en"
-    
     voice_lower = voice.lower()
+
+    # Non-English 2-letter language codes fall back to gTTS
     if voice_lower.startswith("de") or voice_lower == "german":
         use_gtts = True
         gtts_lang = "de"
-    elif voice_lower.startswith("es") or voice_lower in ["ef_dora", "em_alex"]:
-        # Spanish: Kokoro supports es_la / ef_dora / em_alex. If the voice is "es", default to "ef_dora"
-        if voice_lower == "es":
-            req_json["voice"] = "ef_dora"
-    elif len(voice_lower) == 2 and voice_lower not in ["en", "es", "fr", "ja", "zh", "pt", "it"]:
-        # Other 2-letter languages not natively supported by Kokoro
+    elif len(voice_lower) == 2 and voice_lower not in ["en"]:
         use_gtts = True
         gtts_lang = voice_lower
 
@@ -425,10 +437,11 @@ async def text_to_speech(request: Request):
             logger.error(f"gTTS generation failed: {e}")
             return Response(status_code=500, content=f"gTTS Error: {str(e)}")
 
-    # Otherwise proxy to Kokoro
-    logger.info(f"Proxying TTS request to Kokoro-FastAPI: {req_json.get('input', '')[:40]}...")
-    if "voice" not in req_json or req_json["voice"] == "en_US-lessac-medium":
-        req_json["voice"] = "af_bella"
+    # Proxy to Kokoro TTS
+    logger.info(f"Proxying TTS to Kokoro: voice={voice_lower!r} text={req_json.get('input', '')[:40]!r}")
+    # Ensure voice is set to 'default' if not already mapped
+    if "voice" not in req_json or not req_json["voice"]:
+        req_json["voice"] = "default"
         
     try:
         req = http_client.build_request(

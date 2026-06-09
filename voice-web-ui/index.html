@@ -704,6 +704,9 @@
                         <label style="display: flex; align-items: center; gap: 8px; text-transform: none; font-size: 0.95rem; color: var(--text-primary);">
                             <input type="checkbox" id="skillAppointments" checked value="appointments" style="transform: scale(1.15);"> appointments DB
                         </label>
+                        <label style="display: flex; align-items: center; gap: 8px; text-transform: none; font-size: 0.95rem; color: var(--text-primary);">
+                            <input type="checkbox" id="skillTickets" value="tickets" style="transform: scale(1.15);"> support tickets CRM
+                        </label>
                     </div>
                 </div>
                 <div class="form-group">
@@ -841,6 +844,7 @@
         const bizVoice = document.getElementById("bizVoice");
         const bizWebhook = document.getElementById("bizWebhook");
         const skillAppointments = document.getElementById("skillAppointments");
+        const skillTickets = document.getElementById("skillTickets");
         const bizPrompt = document.getElementById("bizPrompt");
         const saveBizBtn = document.getElementById("saveBizBtn");
 
@@ -1158,6 +1162,7 @@
             bizVoice.value = biz.voice;
             bizWebhook.value = biz.teams_webhook_url || "";
             skillAppointments.checked = biz.skills.includes("appointments");
+            skillTickets.checked = biz.skills.includes("tickets");
             bizPrompt.value = biz.prompt;
             modalTitle.textContent = "Update Agent Profile";
             saveBizBtn.textContent = "SAVE CHANGES";
@@ -1174,6 +1179,7 @@
             
             const skills = [];
             if (skillAppointments.checked) skills.push("appointments");
+            if (skillTickets.checked) skills.push("tickets");
             
             const payload = {
                 name: bizName.value,
