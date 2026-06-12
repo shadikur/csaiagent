@@ -165,6 +165,90 @@ def is_identity_question(text: str) -> bool:
     return False
 
 
+async def wrap_llm_stream(original_stream):
+    json_buffer = ""
+    in_json = False
+    chunk_id = "call_local"
+    try:
+        async for chunk in original_stream:
+            delta = chunk.delta
+            if delta and delta.content:
+                content = delta.content
+                chunk_id = chunk.id
+                
+                clean_content = ""
+                for char in content:
+                    if not in_json:
+                        if char == '{':
+                            in_json = True
+                            json_buffer += char
+                        else:
+                            clean_content += char
+                    else:
+                        json_buffer += char
+                
+                if clean_content:
+                    import copy
+                    new_delta = copy.copy(delta)
+                    new_delta.content = clean_content
+                    new_chunk = copy.copy(chunk)
+                    new_chunk.delta = new_delta
+                    yield new_chunk
+            else:
+                yield chunk
+                
+        # Stream has completed! If we buffered JSON, parse it as a tool call.
+        if json_buffer:
+            raw_json = json_buffer.strip()
+            logging.info(f"LLM Stream ended. Attempting to parse buffered inline JSON tool call: {raw_json}")
+            
+            # Clean up python-style booleans and None
+            cleaned_text = re.sub(r'\bTrue\b', 'true', raw_json)
+            cleaned_text = re.sub(r'\bFalse\b', 'false', cleaned_text)
+            cleaned_text = re.sub(r'\bNone\b', 'null', cleaned_text)
+            
+            try:
+                data = json.loads(cleaned_text)
+                name = data.get("name")
+                parameters = data.get("parameters", {})
+                if name:
+                    logging.info(f"Successfully parsed tool call '{name}' from inline JSON with params: {parameters}")
+                    import uuid
+                    call_id = f"call_{uuid.uuid4().hex[:8]}"
+                    # Construct function tool call
+                    tool_call = llm.FunctionToolCall(
+                        arguments=json.dumps(parameters),
+                        name=name,
+                        call_id=call_id
+                    )
+                    # Yield a chunk containing the tool call
+                    chunk = llm.ChatChunk(
+                        id=chunk_id,
+                        delta=llm.ChoiceDelta(
+                            role="assistant",
+                            content="",
+                            tool_calls=[tool_call]
+                        )
+                    )
+                    yield chunk
+                else:
+                    raise ValueError("No 'name' field in JSON structure")
+            except Exception as e:
+                logging.warning(f"Failed to parse buffered inline JSON tool call: {e}. Raw was: {raw_json}")
+                # Fallback: yield the raw buffer as standard text content so it gets spoken or logged
+                chunk = llm.ChatChunk(
+                    id=chunk_id,
+                    delta=llm.ChoiceDelta(
+                        role="assistant",
+                        content=json_buffer
+                    )
+                )
+                yield chunk
+    except Exception as e:
+        logging.error(f"Error in wrap_llm_stream loop: {e}")
+        raise
+
+
 class FilteredAgent(Agent):
     def tts_node(self, text, model_settings):
         async def filtered_text_generator():
@@ -221,13 +305,23 @@ class FilteredAgent(Agent):
                 
         cleaned_ctx = llm.ChatContext(cleaned_items)
         
-        # Check if the last user message was an identity question
+        # Extract the last user message and the last assistant message
         last_user_msg = None
+        last_assistant_msg = None
         for item in reversed(cleaned_items):
-            if isinstance(item, llm.ChatMessage) and item.role == "user":
-                last_user_msg = item.text_content
+            if isinstance(item, llm.ChatMessage):
+                if item.role == "user" and last_user_msg is None:
+                    last_user_msg = item.text_content
+                elif item.role == "assistant" and last_assistant_msg is None:
+                    last_assistant_msg = item.text_content
+            if last_user_msg is not None and last_assistant_msg is not None:
                 break
         
+        # Store last messages in session_holder for tools validation
+        if hasattr(self, "session_holder") and isinstance(self.session_holder, dict):
+            self.session_holder["last_user_msg"] = last_user_msg
+            self.session_holder["last_assistant_msg"] = last_assistant_msg
+            
         active_tools = tools
         if last_user_msg and is_identity_question(last_user_msg):
             logging.info(f"Identity question detected: '{last_user_msg}'. Temporarily clearing tools to prevent hallucinated tool calls.")
@@ -276,28 +370,82 @@ class FilteredAgent(Agent):
         if disabled_tools:
             active_tools = [t for t in active_tools if t.info.name not in disabled_tools]
 
-        # TRANSFER CONFIRMATION GATE
-        # The LLM must NOT call transfer_call unless the caller has explicitly confirmed they
-        # want to be transferred. Gate this at the code level to prevent hallucinated transfers
-        # triggered by ambiguous questions like "Can I speak to Edel?".
-        transfer_confirmation_keywords = [
-            # English
-            "yes", "sure", "please", "go ahead", "transfer", "connect me", "put me through",
-            "yes please", "ok", "okay", "yeah",
-            # Spanish
-            "sí", "si", "por favor", "claro", "adelante", "transfiera", "conéctame",
-            # German
-            "ja", "bitte", "weiterleiten", "verbinden"
-        ]
-        if last_user_msg and any(t.info.name == "transfer_call" for t in active_tools):
-            msg_lower = last_user_msg.lower()
-            has_transfer_confirmation = any(kw in msg_lower for kw in transfer_confirmation_keywords)
-            if not has_transfer_confirmation:
-                logging.info(
-                    f"Transfer confirmation gate: blocking 'transfer_call' — "
-                    f"no explicit confirmation found in: '{last_user_msg}'"
-                )
-                active_tools = [t for t in active_tools if t.info.name != "transfer_call"]
+        # CONTEXT-AWARE TOOL GATING SYSTEM
+        # Dynamically restrict available tools based on conversation context and user intent.
+        if last_user_msg:
+            user_lower = last_user_msg.lower()
+            assistant_lower = last_assistant_msg.lower() if last_assistant_msg else ""
+            
+            confirm_keywords = [
+                "yes", "sure", "please", "go ahead", "ok", "okay", "yeah", "yep", "yup",
+                "sí", "si", "por favor", "claro", "adelante", "ja", "bitte"
+            ]
+            user_confirmed = any(kw in user_lower for kw in confirm_keywords)
+
+            # 1. Gating transfer_call
+            if any(t.info.name == "transfer_call" for t in active_tools):
+                user_req = any(kw in user_lower for kw in [
+                    "transfer", "connect", "speak to", "speak with", "talk to", "talk with",
+                    "human", "representative", "agent", "someone", "person", "put me through",
+                    "pass me", "extension", "call shadikur", "get shadikur", "speak to shadikur",
+                    "talk to shadikur", "put through"
+                ])
+                assistant_offered = any(kw in assistant_lower for kw in [
+                    "transfer", "connect", "put you through", "put you to", "extension",
+                    "speak to", "speak with", "talk to", "talk with", "human", "representative"
+                ])
+                if not (user_req or (assistant_offered and user_confirmed)):
+                    logging.info(f"Tool gating: blocking 'transfer_call' — no transfer intent. User: '{last_user_msg}'")
+                    active_tools = [t for t in active_tools if t.info.name != "transfer_call"]
+
+            # 2. Gating take_message
+            if any(t.info.name == "take_message" for t in active_tools):
+                user_req = any(kw in user_lower for kw in [
+                    "message", "note", "call me back", "callback", "leave a message",
+                    "take a message", "take a note", "pass on a message", "write this down", "write down"
+                ])
+                assistant_offered = any(kw in assistant_lower for kw in [
+                    "message", "note", "callback", "call back", "call you back", "take a message"
+                ])
+                if not (user_req or (assistant_offered and user_confirmed)):
+                    logging.info(f"Tool gating: blocking 'take_message' — no message intent. User: '{last_user_msg}'")
+                    active_tools = [t for t in active_tools if t.info.name != "take_message"]
+
+            # 3. Gating create_support_ticket
+            if any(t.info.name == "create_support_ticket" for t in active_tools):
+                user_req = any(kw in user_lower for kw in [
+                    "ticket", "support request", "open a ticket", "file a ticket", "submit a ticket",
+                    "file a support", "open a support", "submit a support", "create a ticket",
+                    "create a support", "open ticket", "file ticket", "submit ticket", "create ticket"
+                ])
+                assistant_offered = any(kw in assistant_lower for kw in [
+                    "ticket", "support request", "open a ticket", "file a ticket", "submit a ticket",
+                    "open ticket", "file ticket", "submit ticket"
+                ])
+                if not (user_req or (assistant_offered and user_confirmed)):
+                    logging.info(f"Tool gating: blocking 'create_support_ticket' — no ticket intent. User: '{last_user_msg}'")
+                    active_tools = [t for t in active_tools if t.info.name != "create_support_ticket"]
+
+            # 4. Gating book_appointment
+            if any(t.info.name == "book_appointment" for t in active_tools):
+                user_req = any(kw in user_lower for kw in [
+                    "appointment", "book", "schedule", "make a meeting", "meeting", "slot", "reserve"
+                ])
+                assistant_offered = any(kw in assistant_lower for kw in [
+                    "appointment", "schedule", "book", "meeting", "slot", "reserve"
+                ])
+                if not (user_req or (assistant_offered and user_confirmed)):
+                    logging.info(f"Tool gating: blocking 'book_appointment' — no appointment intent. User: '{last_user_msg}'")
+                    active_tools = [t for t in active_tools if t.info.name != "book_appointment"]
+
+            # 5. Gating cancel_appointment
+            if any(t.info.name == "cancel_appointment" for t in active_tools):
+                user_req = any(kw in user_lower for kw in [
+                    "cancel", "reschedule", "change my appointment", "cancel my appointment"
+                ])
+                if not user_req:
+                    logging.info(f"Tool gating: blocking 'cancel_appointment' — no cancel intent. User: '{last_user_msg}'")
+                    active_tools = [t for t in active_tools if t.info.name != "cancel_appointment"]
 
         # Detect if this turn is responding to a tool result — if so, increase num_predict
         # so the LLM has enough tokens to generate a spoken follow-up (avoids silent hangup).
@@ -332,7 +480,8 @@ class FilteredAgent(Agent):
         logging.info(f"Tools available: {[t.info.name for t in active_tools]}")
         logging.info("----------------------------------")
         
-        return super().llm_node(cleaned_ctx, active_tools, effective_model_settings)
+        original_stream = super().llm_node(cleaned_ctx, active_tools, effective_model_settings)
+        return wrap_llm_stream(original_stream)
 
 
 class AppointmentTools:
@@ -366,17 +515,22 @@ class AppointmentTools:
         reason = (reason or "").strip()
 
         missing = []
-        if not name or name.lower() in ["undefined", "null", "none", "placeholder"]:
+        is_name_placeholder = not name or name.lower() in ["undefined", "null", "none", "placeholder", "john doe", "john_doe", "johndoe", "unknown", "caller", "user"]
+        is_phone_placeholder = not phone or phone.lower() in ["undefined", "null", "none", "placeholder", "1234567890", "123456789", "555-555-5555", "5555555555"] or len(re.sub(r'\D', '', phone)) < 7
+        is_time_placeholder = not time or time.lower() in ["undefined", "null", "none", "placeholder", "unknown"]
+        is_reason_placeholder = not reason or len(reason) < 3 or reason.lower() in ["undefined", "null", "none", "placeholder", "unknown", "reason"]
+
+        if is_name_placeholder:
             missing.append("name")
-        if not phone or phone.lower() in ["undefined", "null", "none", "placeholder"]:
-            missing.append("phone number")
-        if not time or time.lower() in ["undefined", "null", "none", "placeholder"]:
+        if is_phone_placeholder:
+            missing.append("valid phone number")
+        if is_time_placeholder:
             missing.append("time")
-        if not reason or reason.lower() in ["undefined", "null", "none", "placeholder"]:
+        if is_reason_placeholder:
             missing.append("reason for visit")
 
         if missing:
-            return f"Error: Cannot book. The following details are missing or invalid: {', '.join(missing)}. Please politely ask the caller for these details."
+            return f"Error: Cannot book. The following details are missing, invalid, or placeholders: {', '.join(missing)}. Please politely ask the caller for these details."
 
         existing = await self.appointments.find_one({"business_id": self.business_id, "time": time, "status": "scheduled"})
         if existing:
@@ -417,13 +571,136 @@ class AppointmentTools:
         return f"No scheduled appointment was found for phone {phone} at {time}."
 
     @llm.function_tool
-    async def transfer_call(self, extension: str) -> str:
+    async def lookup_contact(self, name: str) -> str:
+        """Look up a contact's extension, email, or details from the business contact directory. Call this ONLY when the caller asks for contact details, phone numbers, email addresses, or extension numbers of employees.
+        
+        Args:
+            name: The name of the employee or department to search for.
+        """
+        name = (name or "").strip()
+        if not name:
+            return "Error: Please specify the name to search for in the contacts directory."
+            
+        # Reject generic placeholder names
+        is_placeholder = any(p in name.lower() for p in [
+            "unknown", "not provided", "placeholder", "undefined", "null", "none", "your",
+            "caller", "user", "someone", "somebody", "anyone", "anybody", "nobody",
+            "the person", "trying to reach", "not specified", "n/a", "na", "something"
+        ])
+        if is_placeholder:
+            return "Error: Cannot lookup contact. The search query is not a specific employee's name. Please politely ask the caller for the specific employee's name they would like to contact."
+        
+        try:
+            # Check the "contacts" collection
+            contacts_col = self.db["contacts"]
+            # Perform a case-insensitive regex search on the name field
+            cursor = contacts_col.find({
+                "business_id": self.business_id,
+                "name": {"$regex": name, "$options": "i"}
+            })
+            results = await cursor.to_list(length=10)
+            if not results:
+                return f"No contacts found matching '{name}' in the directory."
+            
+            lines = []
+            for r in results:
+                line = f"- Name: {r.get('name')}"
+                if r.get("extension"):
+                    line += f", Extension: {r.get('extension')}"
+                if r.get("email"):
+                    line += f", Email: {r.get('email')}"
+                if r.get("department"):
+                    line += f", Department: {r.get('department')}"
+                lines.append(line)
+            
+            return "Contact directory matches:\n" + "\n".join(lines)
+        except Exception as e:
+            logging.error(f"Error looking up contact: {e}")
+            return f"Error: Failed to query contact directory: {str(e)}"
+
+    @llm.function_tool
+    async def check_calendar_day(self, date: str) -> str:
+        """Check all scheduled appointments and bookings on the calendar for a specific date (formatted as YYYY-MM-DD, e.g. '2026-06-12'). Call this when the caller asks about the agenda, scheduled bookings, or free blocks on a particular day.
+        
+        Args:
+            date: The date to inspect in YYYY-MM-DD format.
+        """
+        date = (date or "").strip()
+        # Basic validation: ensure it has a date format
+        if not date or not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+            return "Error: Invalid date format. Please specify the date in YYYY-MM-DD format."
+            
+        try:
+            # Query scheduled appointments on this date
+            # We check if the time field starts with the specified date
+            cursor = self.appointments.find({
+                "business_id": self.business_id,
+                "status": "scheduled",
+                "time": {"$regex": f"^{date}"}
+            }).sort("time", 1)
+            results = await cursor.to_list(length=20)
+            
+            if not results:
+                return f"No appointments are scheduled for {date}. The calendar is completely free."
+                
+            lines = [f"Appointments scheduled for {date}:"]
+            for r in results:
+                # Extract time part from the full time string
+                time_val = r.get("time")
+                time_only = time_val.split()[-1] if len(time_val.split()) > 1 else time_val
+                lines.append(f"- At {time_only}: Booked for '{r.get('reason', 'visit')}'")
+                
+            return "\n".join(lines)
+        except Exception as e:
+            logging.error(f"Error checking calendar: {e}")
+            return f"Error: Failed to query calendar: {str(e)}"
+
+    @llm.function_tool
+    async def transfer_call(self, extension: str | int, confirmed: bool | str = False) -> str:
         """Transfer the call to an internal extension on the PBX. Call this ONLY when the user explicitly requests to be transferred, and they have already confirmed they want to be transferred. You are strictly forbidden from calling this tool unless the transfer is confirmed.
         
         Args:
             extension: The extension number or department to transfer to.
+            confirmed: Whether the caller has explicitly confirmed they want to be transferred. Default is False.
         """
-        extension = (extension or "").strip()
+        if isinstance(confirmed, str):
+            confirmed = confirmed.lower() in ("true", "1", "yes")
+
+        # Double-safety confirmation check at the code level using session context
+        if confirmed:
+            last_user_msg = self.session_holder.get("last_user_msg") if self.session_holder else None
+            last_assistant_msg = self.session_holder.get("last_assistant_msg") if self.session_holder else None
+            
+            user_lower = last_user_msg.lower() if last_user_msg else ""
+            explicit_request = any(kw in user_lower for kw in [
+                "transfer", "connect", "put me through", "put through", "pass me", "extension",
+                "speak to a human", "talk to a human", "speak with a human", "talk with a human",
+                "speak to human", "talk to human", "speak with human", "talk with human",
+                "human representative", "human agent", "human support", "speak to a technician",
+                "talk to a technician", "speak with a technician", "talk with a technician",
+                "speak to shadikur", "talk to shadikur", "speak with shadikur", "talk with shadikur",
+                "connect me", "transfer me"
+            ])
+            
+            assistant_lower = last_assistant_msg.lower() if last_assistant_msg else ""
+            assistant_offered = any(kw in assistant_lower for kw in [
+                "transfer", "connect", "put you through", "put you to", "extension",
+                "speak to", "speak with", "talk to", "talk with", "human", "representative"
+            ])
+            user_confirmed = any(kw in user_lower for kw in [
+                "yes", "sure", "please", "go ahead", "ok", "okay", "yeah", "yep", "yup",
+                "sí", "si", "por favor", "claro", "adelante", "ja", "bitte"
+            ])
+            
+            actual_confirmed = explicit_request or (assistant_offered and user_confirmed)
+            if not actual_confirmed:
+                logging.info(f"Double safety check: overriding confirmed=True to False. User message '{last_user_msg}' did not express transfer confirmation.")
+                confirmed = False
+
+        if not confirmed:
+            return "Error: Cannot transfer. The caller has not explicitly confirmed they want to be transferred. Please ask for confirmation first."
+
+        extension = str(extension or "").strip()
         if not extension:
             return "Error: Please specify the extension number to transfer to."
         
@@ -463,16 +740,20 @@ class AppointmentTools:
                 transfer_to = f"{transfer_to}@{sip_hostname}"
             
         try:
-            # Wait for any currently queued/speaking assistant speech to complete playout
+            # Speak confirmation and wait for it to complete playout before triggering SIP transfer
             session = self.session_holder.get("session")
             if session:
-                speech = session.current_speech
-                if speech:
+                confirmation_phrase = "Please hold for a moment while I try to connect you."
+                logging.info(f"Speaking transfer confirmation: '{confirmation_phrase}'")
+                speech = session.say(confirmation_phrase, allow_interruptions=False)
+                speech_obj = speech or session.current_speech
+                if speech_obj:
                     try:
-                        logging.info("Waiting for agent to finish speaking before triggering SIP transfer...")
-                        await asyncio.wait_for(speech.wait_for_playout(), timeout=4.0)
+                        await asyncio.wait_for(speech_obj.wait_for_playout(), timeout=4.0)
                     except Exception as e:
-                        logging.warning(f"Timeout/error waiting for speech playout before transfer: {e}")
+                        logging.warning(f"Timeout/error waiting for spoken confirmation playout: {e}")
+                else:
+                    await asyncio.sleep(2.0)
             
             from livekit.api import LiveKitAPI
             from livekit.protocol.sip import TransferSIPParticipantRequest
@@ -500,10 +781,10 @@ class AppointmentTools:
     async def take_message(
         self,
         caller_name: str,
-        phone_number: str,
+        phone_number: str | int,
         reason_for_call: str,
         company: str = "None",
-        urgency: str = "False",
+        urgency: str | bool = "False",
         best_callback_time: str = "None"
     ) -> str:
         """Take a message for the user when they are unavailable. Call this ONLY when the caller explicitly asks to leave a message, take a message, or pass on a message/note.
@@ -517,22 +798,22 @@ class AppointmentTools:
             best_callback_time: Best time to call back, if specified.
         """
         caller_name = (caller_name or "").strip()
-        phone_number = (phone_number or "").strip()
+        phone_number = str(phone_number or "").strip()
         reason_for_call = (reason_for_call or "").strip()
         company = (company or "").strip()
-        urgency = (urgency or "").strip()
+        urgency = str(urgency or "").strip()
         best_callback_time = (best_callback_time or "").strip()
         
         # Check for placeholders or missing values
         missing = []
-        is_name_placeholder = not caller_name or any(p in caller_name.lower() for p in ["unknown", "not provided", "placeholder", "undefined", "null", "none", "your", "name", "caller", "user"])
+        is_name_placeholder = not caller_name or any(p in caller_name.lower() for p in ["unknown", "not provided", "placeholder", "undefined", "null", "none", "your", "name", "caller", "user", "john doe", "john_doe", "johndoe"])
         
         # Phone number must contain at least 5 digits and not contain placeholder words
         digits_count = sum(c.isdigit() for c in phone_number)
         is_phone_placeholder = (
             not phone_number 
             or digits_count < 5 
-            or any(p in phone_number.lower() for p in ["unknown", "not", "provided", "placeholder", "undefined", "null", "none", "your", "caller", "web", "sandbox", "phone", "number"])
+            or any(p in phone_number.lower() for p in ["unknown", "not", "provided", "placeholder", "undefined", "null", "none", "your", "caller", "web", "sandbox", "phone", "number", "1234567890", "123456789", "5555555555", "555-555-5555"])
         )
         
         is_reason_placeholder = (
@@ -630,13 +911,13 @@ class AppointmentTools:
         email: str,
         message: str,
         department: str = "4",
-        priority: str = "2"
+        priority: str = "2",
+        confirmed: bool = False
     ) -> str:
         """Create a support ticket in the CRM.
 
         STRICT RULES — you MUST follow all of these before calling this tool:
-        1. The caller must have EXPLICITLY asked to 'create a ticket', 'submit a ticket',
-           'report an issue' as a formal request — NOT just mentioning a problem in passing.
+        1. You must have EXPLICIT confirmation from the caller that they want a support ticket opened. Do NOT call this tool unless the caller has explicitly confirmed they want a ticket created, and you must pass confirmed=True.
         2. You MUST have collected ALL of the following DIRECTLY from the caller in this
            conversation (do NOT assume, invent, or reuse values from previous turns):
            - Their full name (caller said it themselves)
@@ -644,7 +925,7 @@ class AppointmentTools:
            - A clear subject/summary
            - A detailed description of the issue
         3. If ANY detail is missing, ask the caller for it first. Do NOT call this tool
-           with placeholder, assumed, or hallucinated values.
+           with placeholder, assumed, or hallucinated values (e.g. do NOT use "John Doe" or "example.com" or "johndoe").
 
         Args:
             subject: Short summary of the ticket (from caller).
@@ -653,17 +934,24 @@ class AppointmentTools:
             message: Detailed description of the issue (from caller).
             department: Department ID ('1'=Admin, '4'=Tech Support, '5'=Quotation). Default '4'.
             priority: Priority level ('1'=Low, '2'=Medium, '3'=High). Default '2'.
+            confirmed: Whether the caller has explicitly confirmed they want a support ticket opened. Default is False. You must only set this to True once the caller explicitly says they want a ticket opened.
         """
+        if isinstance(confirmed, str):
+            confirmed = confirmed.lower() in ("true", "1", "yes")
+
+        if not confirmed:
+            return "Error: Cannot create ticket. The caller has not explicitly confirmed they want a support ticket opened. Please politely ask: 'Would you like me to open a support ticket for you?' first."
+
         subject = (subject or "").strip()
         name = (name or "").strip()
         email = (email or "").strip()
         message = (message or "").strip()
-        department = (department or "4").strip()
-        priority = (priority or "2").strip()
+        department = str(department or "4").strip()
+        priority = str(priority or "2").strip()
 
         missing = []
-        is_name_placeholder = not name or any(p in name.lower() for p in ["unknown", "not provided", "placeholder", "undefined", "null", "none", "your", "name", "caller", "user"])
-        is_email_placeholder = not email or "@" not in email or "." not in email or any(p in email.lower() for p in ["unknown", "placeholder", "undefined", "null", "none", "your", "email"])
+        is_name_placeholder = not name or any(p in name.lower() for p in ["unknown", "not provided", "placeholder", "undefined", "null", "none", "your", "name", "caller", "user", "john doe", "john_doe", "johndoe"])
+        is_email_placeholder = not email or "@" not in email or "." not in email or any(p in email.lower() for p in ["unknown", "placeholder", "undefined", "null", "none", "your", "email", "john doe", "john_doe", "johndoe", "example.com"])
         is_subject_placeholder = not subject or any(p in subject.lower() for p in ["unknown", "placeholder", "undefined", "null", "none", "your", "subject"])
         is_message_placeholder = not message or len(message) < 5 or any(p in message.lower() for p in ["unknown", "placeholder", "undefined", "null", "none", "your", "message"])
 
@@ -1075,10 +1363,12 @@ async def entrypoint(ctx: JobContext):
             "- You have the ability to create a support ticket in the CRM using the 'create_support_ticket' tool. "
             "You are strictly FORBIDDEN from calling this tool or offering to create a ticket unless the caller explicitly requests to file a ticket, open a ticket, or submit a support request. "
             "Do NOT assume the caller wants a ticket filed just because they report a problem; instead, first ask them: 'Would you like me to open a support ticket for you?' or wait until they explicitly ask to open a ticket.\n"
+            "- Once the caller confirms they want a ticket opened, you must pass confirmed=true in the tool call. If they have not confirmed, you are strictly forbidden from calling this tool or passing confirmed=true.\n"
             "- If they confirm they want a ticket created, you MUST collect the caller's Name, Email Address, Subject of the issue, and detailed Message/description of the problem before submitting it.\n"
             "- If any of these details (Name, Email, Subject, or Message) are missing, you MUST ask the caller for them first. Ask politely and clearly.\n"
-            "- Do NOT call the create_support_ticket tool if any of those details are missing. Instead, ask the user for them in conversation.\n"
-            "- Do NOT tell the caller that their ticket is created/submitted until the create_support_ticket tool has been executed and returned a success message.\n"
+            "- Do NOT call the create_support_ticket tool if any of those details are missing or are placeholder/hallucinated values like 'John Doe' or 'example.com'. Instead, ask the user for them in conversation.\n"
+            "- You are strictly FORBIDDEN from calling the lookup_contact tool to search for company names (such as 'CompuSOURCE') or contact details when you are in the process of creating a support ticket. You must only use details explicitly spoken by the caller. If details are missing, ask the caller for them directly.\n"
+            "- Do NOT tell the caller that their ticket is created or submitted until the create_support_ticket tool has been executed and returned a success message. You are strictly FORBIDDEN from claiming, saying, or pretending that a support ticket has been opened or submitted if the create_support_ticket tool has not successfully run in this call session.\n"
             "- By default, use department '4' (Tech Support) for all technical support tickets, and priority '2' (Medium), unless the caller specifies otherwise.\n"
         )
         
@@ -1132,17 +1422,15 @@ async def entrypoint(ctx: JobContext):
         logging.warning(f"Failed to schedule STT warmup: {e}")
     llm_model = openai.LLM(
         base_url="http://127.0.0.1:11434/v1",
-        model="llama3.1:8b-instruct-q4_K_M",
+        model="llama3.1-8k",
         api_key="local",
         temperature=0.1,
         _strict_tool_schema=False,
+        timeout=httpx.Timeout(25.0, connect=5.0),
         extra_body={
             "options": {
-                # 6000 tokens: comfortably fits system prompt (~300 tok) + tool
-                # definitions (~600 tok) + a full multi-tool conversation (~4000 tok).
-                # 3072 was too small and caused context truncation mid-call.
-                # 8192 added ~3s prefill overhead per turn — 6000 is the balance.
-                "num_ctx": 6000,
+                # llama3.1-8k is a custom model with 8192 context size set natively.
+                "num_ctx": 8192,
                 "num_predict": 120,
                 "keep_alive": -1
             }
@@ -1200,9 +1488,14 @@ async def entrypoint(ctx: JobContext):
     if take_msg_tool:
         tools_list.append(take_msg_tool)
         
+    # Always include lookup_contact tool as a base receptionist capability
+    lookup_contact_tool = next((t for t in all_tools if t.info.name == "lookup_contact"), None)
+    if lookup_contact_tool:
+        tools_list.append(lookup_contact_tool)
+        
     if "appointments" in skills:
-        # Include appointment tools
-        tools_list.extend([t for t in all_tools if t.info.name in ["check_availability", "book_appointment", "cancel_appointment"]])
+        # Include appointment tools and calendar checker
+        tools_list.extend([t for t in all_tools if t.info.name in ["check_availability", "book_appointment", "cancel_appointment", "check_calendar_day"]])
         
     if "tickets" in skills:
         # Include support ticket tools
@@ -1242,6 +1535,7 @@ async def entrypoint(ctx: JobContext):
         instructions=agent_prompt,
         turn_handling=turn_handling
     )
+    assistant.session_holder = session_holder
     
     # Initialize live call log record in MongoDB
     call_record = {

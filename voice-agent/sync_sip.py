@@ -5,6 +5,7 @@ import json
 import tempfile
 import asyncio
 import logging
+import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 
 logging.basicConfig(level=logging.INFO)
@@ -121,6 +122,38 @@ async def sync():
                 logger.error(f"Error registering dispatch rule for {name} ({ext}): {e}")
         else:
             logger.info(f"SIP Dispatch Rule {rule_name} already exists.")
+
+    # Model Preloading Warmup
+    async with httpx.AsyncClient() as client:
+        # 1. Warm up LLM
+        logger.info("Warming up LLM model (llama3.1-8k) from sync_sip...")
+        try:
+            llm_payload = {
+                "model": "llama3.1-8k",
+                "messages": [{"role": "user", "content": "hello"}],
+                "temperature": 0.1
+            }
+            res = await client.post("http://127.0.0.1:11434/v1/chat/completions", json=llm_payload, timeout=30.0)
+            if res.status_code == 200:
+                logger.info(f"LLM warmup complete! Response: {res.json()['choices'][0]['message']['content'].strip()}")
+            else:
+                logger.warning(f"LLM warmup returned status {res.status_code}: {res.text}")
+        except Exception as e:
+            logger.warning(f"LLM warmup failed in sync_sip: {e}")
+
+        # 2. Warm up TTS
+        logger.info("Warming up TTS model (voice af_bella) from sync_sip...")
+        try:
+            tts_payload = {
+                "model": "tts-1",
+                "input": " ",
+                "voice": "af_bella",
+                "response_format": "wav"
+            }
+            res = await client.post("http://127.0.0.1:10201/v1/audio/speech", json=tts_payload, timeout=30.0)
+            logger.info(f"TTS warmup complete! Status: {res.status_code}")
+        except Exception as e:
+            logger.warning(f"TTS warmup failed in sync_sip: {e}")
 
 if __name__ == "__main__":
     asyncio.run(sync())
